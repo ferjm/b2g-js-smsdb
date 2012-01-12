@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+</head>
+<body>
+<button onclick="next();">Run tests</button>
+<p>Warning! Running these tests will destroy all your SMS data!</p>
+
+<script type="application/javascript;version=1.8" src="smsdbservice.js"></script>
+<script type="application/javascript;version=1.8">
+
+function onSuccess(sms) {
+  console.log("onSuccess", sms);
+  next();
+}
+
+function onFailure(error) {
+  console.error("onFailure", error);
+}
+
+function assert(assertion, msg) {
+  if (assertion) {
+    console.info("TEST-PASS", msg);
+  } else {
+    throw "TEST-UNEXPECTED_FAIL " + msg;
+  }
+}
+
+let index = 0;
+let steps = [
+  function () {
+    console.log("Deleting database");
+    let request = window.mozIndexedDB.deleteDatabase("sms");
+    request.onsuccess = request.onerror = function (event) {
+      console.log("Deleted the database", event.errorCode);
+      next();
+    };
+  },
+  function () {
+    console.log("Deleting database");
+    window.mozIndexedDB.deleteDatabase("sms").onsuccess = onSuccess;
+  },
+  function () {
+    console.log("All done");
+  }
+];
+
+function next() {
+  if (index >= steps.length) {
+    console.log("Shouldn't get here!", Error().stack);
+    return;
+  }
+  try {
+    steps[index]();
+  } catch(ex) {
+    console.log("Caught exception", ex);
+  }
+  index += 1;
+}
+
+</script>
+</body>
+</html>
