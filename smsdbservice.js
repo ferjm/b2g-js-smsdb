@@ -41,6 +41,9 @@ const DB_NAME = "sms";
 const DB_VERSION = 1;
 const STORE_NAME = "sms";
 
+const DELIVERY_RECEIVED = "received";
+const DELIVERY_SENT = "sent";
+
 /**
  * SmsError
  */
@@ -157,17 +160,30 @@ SmsDatabaseService.prototype = {
   /**
    * Create the initial database schema.
    *
-   * The schema of records stored is as follows:
-   * TODO: db schema
-   *
+   * The schema of records stored, according to nsIDOMMozSmsMessage is as 
+   * follows:
+   * 
+   * {id:        number,     // UUID.
+   *  delivery:  number,     // Should be "sent" or "received" //TODO: howto enum type??
+   *  sender:    string,     // Address of the sender of the Sms.
+   *  receiver:  string,     // Address of the receiver of the Sms //TODO: shouldn´t be []
+   *  body:      string,     // Content of the Sms.
+   *  timestamp: date,       // Date of the delivery of the Sms.
+   * }
    */
   createSchema: function createSchema(db) {
     let objectStore = db.createObjectStore(STORE_NAME, {keyPath: "id"});
 
     // Metadata indexes
-    objectStore.createIndex("id",        "id", { unique: true });
+    objectStore.createIndex("id", "id", { unique: true });
 
-    // TODO: add fields to schema acording to WebSMS specification
+    // Index for the Sms addresses
+    // TODO: Check this: I understand the indexes as a way for quick searching
+    //       As we probably want to search by sender, receiver and timestamp,
+    //       we need the following indexes.
+    objectStore.createIndex("sender", "sender", { unique: false });
+    objectStore.createIndex("receiver", "receiver", {unique: false});
+    objectStore.createIndex("timestamp", "timestamp", {unique:false});
 
     debug("Created object stores and indexes");
   },
@@ -205,6 +221,121 @@ SmsDatabaseService.prototype = {
 
       callback(txn, store);
     }, failureCb);
+  },
+
+  /**
+   * Create a new Sms object.
+   *
+   * @param record
+   *        A record as stored in IndexedDB
+   * @param delivery
+   * //TODO:       
+   * @param sender [optional]
+   * //TODO:
+   * @param receiver [optional]
+   * //TODO:
+   * @param body [optional]
+   * //TODO:
+   * @param successCb
+   *        Success Callback.
+   * @param errorCb
+   *        Error Callback.
+   *
+   * @return an Sms object.
+   *
+   * The returned Sms object closes over the IndexedDB record.
+   */
+  makeSms: function makeSms(record, 
+                            delivery, 
+                            sender, 
+                            receiver, 
+                            body,
+                            timestamp) {
+    let smsService = this;
+
+    let sms = record;
+    //TODO: temporary workaround
+    sms.id = null;
+    if ((!sms.hasOwnProperty("delivery")) && (delivery)) {
+      sms.delivery = delivery;
+    }
+    if ((!sms.hasOwnProperty("sender")) && (sender)) {
+      sms.sender= sender;
+    }
+    if ((!sms.hasOwnProperty("receiver")) && (receiver)) {
+      sms.receiver = receiver;
+    }
+    if ((!sms.hasOwnProperty("body")) && (body)) {
+      sms.body = body;
+    }
+    if ((!sms.hasOwnProperty("timestamp")) && (timestamp)) {
+      sms.timestamp = timestamp;
+    }
+
+    // Use Object.defineProperty() to ensure these methods aren´t
+    // writeable, configurable, enumerable.
+    Object.defineProperty(sms, "save",
+                          {value: function save(successCb, errorCb){
+      smsService.saveSms(record, successCb, errorCb);
+    }});
+
+    Object.defineProperty(sms, "remove",
+                          {value: function remove(successCb, errorCb) {
+      smsService.deleteMessage(successCb, errorCb);
+    }});
+    //TODO: we need this...
+    /*Object.defineProperty(sms, "id", {enumerable: true,
+                                      get: function () {
+      return sms.id;
+    }});*/
+    
+    Object.seal(sms);
+    return sms;
+  },
+
+  updateRecordMetadata: function updateRecordMetadata(record) {
+    if (!record.id) {
+      record.id = generateUUID();
+    }
+  },
+
+  saveSms: function saveSms(record, successCb, errorCb) {
+    //TODO: verify record
+    this.newTxn(IDBTransaction.READ_WRITE, function(txn, store) {
+      this.updateRecordMetadata(record);
+      store.put(record);
+      txn.result = record;
+    }.bind(this), successCb, errorCb);
+  },
+
+  removeSms: function removeSms(recordId, successCb, errorCb) {
+    //TODO: verify record
+    this.newTxn(IDBTransaction.READ_WRITE, function(txn, store) {
+      debug("Going to delete contact with id: ", recordId);
+      store.delete(recordId);
+    }, successCb, errorCb);
+  },
+
+  //TODO: change this for a find function
+  getAllSms: function getAllSms(successCb, failureCb, options) {
+    let self = this;
+    this.newTxn(IDBTransaction.READ_ONLY, function (txn, store) {
+      self._findAll(txn, store);
+    }, successCb, failureCb);
+  },
+
+  _findAll: function _findAll(txn, store) {
+    store.getAll().onsuccess = function (event) {
+      console.log("Request successful. Record count: ",
+                  event.target.result.length);
+      txn.result = event.target.result.map(this.makeSms.bind(this));
+    }.bind(this);
+  },
+
+  createSentMessage: function createSentMessage(aSender, aReceiver, aBody, aDate) {
+    // We start with an empty DB record.
+    let record = {};
+    return this.makeSms(record, DELIVERY_SENT, aSender, aReceiver, aBody, aDate);
   },
 };
 

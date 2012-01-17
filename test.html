@@ -9,6 +9,14 @@
 <script type="application/javascript;version=1.8" src="smsdbservice.js"></script>
 <script type="application/javascript;version=1.8">
 
+let sample_sms = {
+  delivery: "sent",
+  sender: "+34666222111",
+  receiver: "+34666555222",
+  body: "Hi there!",
+  timestamp: "1326732447"
+};
+
 function onSuccess(sms) {
   console.log("onSuccess", sms);
   next();
@@ -35,6 +43,24 @@ let steps = [
       console.log("Deleted the database", event.errorCode);
       next();
     };
+  },
+  function () {
+    console.log("Adding new sms", sample_sms);
+    let sms = window.navigator.mozSmsDatabase.createSentMessage(sample_sms.sender,
+                                                                sample_sms.receiver,
+                                                                sample_sms.body,
+                                                                sample_sms.timestamp);
+    sms.save(function() {
+      console.log("New sms id: " + sms.id);
+      next();
+    }, onFailure);
+  },
+  function () {
+    console.log("Getting all sms");
+    window.navigator.mozSmsDatabase.getAllSms(function (smsList) {
+      console.log("smsList.length = " + smsList.length);
+      next();
+    }, onFailure, {});
   },
   function () {
     console.log("Deleting database");
