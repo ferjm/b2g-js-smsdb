@@ -44,6 +44,9 @@ const STORE_NAME = "sms";
 const DELIVERY_RECEIVED = "received";
 const DELIVERY_SENT = "sent";
 
+// TODO: own number must be retrieved from the RIL
+const CURRENT_ADDRESS = "+34666222111"; 
+
 /**
  * SmsError
  */
@@ -163,12 +166,15 @@ SmsDatabaseService.prototype = {
    * The schema of records stored, according to nsIDOMMozSmsMessage is as 
    * follows:
    * 
-   * {id:        number,     // UUID.
-   *  delivery:  number,     // Should be "sent" or "received" //TODO: howto enum type??
-   *  sender:    string,     // Address of the sender of the Sms.
-   *  receiver:  string,     // Address of the receiver of the Sms //TODO: shouldn´t be []
-   *  body:      string,     // Content of the Sms.
-   *  timestamp: date,       // Date of the delivery of the Sms.
+   * {
+   *  id:        number,     // UUID.
+   *  properties {
+   *    delivery:  number,   // Should be "sent" or "received" //TODO: howto enum type??
+   *    sender:    string,   // Address of the sender of the Sms.
+   *    receiver:  string,   // Address of the receiver of the Sms //TODO: shouldn´t be []
+   *    body:      string,   // Content of the Sms.
+   *    date:      date,     // Date of the delivery of the Sms.
+   *  }
    * }
    */
   createSchema: function createSchema(db) {
@@ -179,11 +185,11 @@ SmsDatabaseService.prototype = {
 
     // Index for the Sms addresses
     // TODO: Check this: I understand the indexes as a way for quick searching
-    //       As we probably want to search by sender, receiver and timestamp,
+    //       As we probably want to search by sender, receiver and date,
     //       we need the following indexes.
-    objectStore.createIndex("sender", "sender", { unique: false });
-    objectStore.createIndex("receiver", "receiver", {unique: false});
-    objectStore.createIndex("timestamp", "timestamp", {unique:false});
+    objectStore.createIndex("sender", "properties.sender", { unique: false });
+    objectStore.createIndex("receiver", "properties.receiver", {unique: false});
+    objectStore.createIndex("date", "properties.date", {unique:false});
 
     debug("Created object stores and indexes");
   },
@@ -228,48 +234,30 @@ SmsDatabaseService.prototype = {
    *
    * @param record
    *        A record as stored in IndexedDB
-   * @param delivery
-   * //TODO:       
-   * @param sender [optional]
-   * //TODO:
-   * @param receiver [optional]
-   * //TODO:
-   * @param body [optional]
-   * //TODO:
-   * @param successCb
-   *        Success Callback.
-   * @param errorCb
-   *        Error Callback.
+   * @param properties [optional]
+   *        Object containing initial field values
    *
    * @return an Sms object.
    *
    * The returned Sms object closes over the IndexedDB record.
    */
   makeSms: function makeSms(record, 
-                            delivery, 
-                            sender, 
-                            receiver, 
-                            body,
-                            timestamp) {
+                            properties) {
     let smsService = this;
 
-    let sms = record;
-    //TODO: temporary workaround
-    sms.id = null;
-    if ((!sms.hasOwnProperty("delivery")) && (delivery)) {
-      sms.delivery = delivery;
+    let sms = record.properties;
+    if (!sms) {
+      sms = record.properties = {
+        delivery:   null,
+        sender:     null,
+        receiver:   null,
+        body:       null,
+        date:       null
+      };
     }
-    if ((!sms.hasOwnProperty("sender")) && (sender)) {
-      sms.sender= sender;
-    }
-    if ((!sms.hasOwnProperty("receiver")) && (receiver)) {
-      sms.receiver = receiver;
-    }
-    if ((!sms.hasOwnProperty("body")) && (body)) {
-      sms.body = body;
-    }
-    if ((!sms.hasOwnProperty("timestamp")) && (timestamp)) {
-      sms.timestamp = timestamp;
+
+    for (let field in properties) {
+      sms[field] = properties[field];
     }
 
     // Use Object.defineProperty() to ensure these methods aren´t
@@ -283,10 +271,13 @@ SmsDatabaseService.prototype = {
                           {value: function remove(successCb, errorCb) {
       smsService.deleteMessage(successCb, errorCb);
     }});
-    //TODO: we need this...
-    /*Object.defineProperty(sms, "id", {enumerable: true,
+    //TODO: getter and setter are not working :(
+    /*
+    Object.defineProperty(sms, "id", {enumerable: true,
                                       get: function () {
       return sms.id;
+    },                                set: function(id) {
+      sms.id = id;
     }});*/
     
     Object.seal(sms);
@@ -337,8 +328,42 @@ SmsDatabaseService.prototype = {
     let record = {};
     return this.makeSms(record, DELIVERY_SENT, aSender, aReceiver, aBody, aDate);
   },
-};
 
+  /**
+   * SmsDatabaseService API
+   */
+
+  /**
+   * Takes some information required to save the message and returns its id.
+   * @param aReceiver
+   *        DOMString containing the address of the reciever of the SMS
+   * @param aBody 
+   *        DOMString containing the body of the SMS
+   * @param aDate
+   *        Date of the SMS delivery
+   *
+   * @returns message id
+   */
+  saveSentMessage: function saveSentMessage(aReceiver, aBody, aDate,
+                                            //TODO: callbacks doesn´t appear
+                                            // in idl ...
+                                            successCb, failureCb) { 
+    let properties = {
+      delivery: DELIVERY_SENT,
+      sender:   CURRENT_ADDRESS,
+      receiver: aReceiver,
+      body:     aBody,
+      date:     aDate
+    };
+    let sms = this.makeSms({}, properties);
+    sms.save(function (record) {
+      console.log ("New sms id: " + record.id);
+      if (record.id) {
+        successCb(record.id);
+      };
+    }, failureCb);
+  }
+};
 
 /**
  * Fake setup for HTML

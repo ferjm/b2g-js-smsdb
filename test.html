@@ -44,16 +44,13 @@ let steps = [
       next();
     };
   },
-  function () {
-    console.log("Adding new sms", sample_sms);
-    let sms = window.navigator.mozSmsDatabase.createSentMessage(sample_sms.sender,
-                                                                sample_sms.receiver,
+  function () {    
+    console.log("Adding new sms with the SmsDatabaseService API", sample_sms);
+    let smsId = window.navigator.mozSmsDatabase.saveSentMessage(sample_sms.receiver,
                                                                 sample_sms.body,
-                                                                sample_sms.timestamp);
-    sms.save(function() {
-      console.log("New sms id: " + sms.id);
-      next();
-    }, onFailure);
+                                                                sample_sms.timestamp,
+                                                                onSuccess,
+                                                                onFailure);
   },
   function () {
     console.log("Getting all sms");
