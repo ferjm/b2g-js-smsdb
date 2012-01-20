@@ -77,13 +77,6 @@ function debug() {
   dump(Array.join(arguments, " "));
 }
 
-/*function generateUI() {
-  //TODO make this a lazy service getter
-  let uuidGenerator = Cc["@mozilla.org/uuid-generator;1"]
-                        .getService(Ci.nsIUUIDGenerator);
-  return uuidGenerator.generateUUID().toString();
-}*/
-
 /**
  * SmsDatabaseService
  */
