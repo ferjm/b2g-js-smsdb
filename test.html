@@ -35,6 +35,7 @@ function assert(assertion, msg) {
 }
 
 let index = 0;
+let messageId = 0;
 let steps = [
   function () {
     console.log("Deleting database");
@@ -46,18 +47,30 @@ let steps = [
   },
   function () {    
     console.log("Adding new sms with the SmsDatabaseService API", sample_sms);
-    let smsId = window.navigator.mozSmsDatabase.saveSentMessage(sample_sms.receiver,
-                                                                sample_sms.body,
-                                                                sample_sms.timestamp,
-                                                                onSuccess,
-                                                                onFailure);
+    window.navigator.mozSmsDatabase.saveSentMessage(sample_sms.receiver,
+                                                    sample_sms.body,
+                                                    sample_sms.timestamp,
+                                                    function (id){
+      messageId = id;
+      onSuccess(id);
+    },onFailure);
   },
   function () {
     console.log("Getting all sms");
     window.navigator.mozSmsDatabase.getAllSms(function (smsList) {
       console.log("smsList.length = " + smsList.length);
       next();
-    }, onFailure, {});
+    }, onFailure);
+  },
+  function () {
+    console.log("Getting sms with id: " + messageId);
+    window.navigator.mozSmsDatabase.getMessage(messageId, 0, 0, 
+                                               function(message){
+      console.log("sms.sender = " + message[0].sender + 
+                  "\nsms.receiver = " + message[0].receiver +
+                  "\nsms.body = " + message[0].body);
+      next();
+    }, onFailure);
   },
   function () {
     console.log("Deleting database");
@@ -80,7 +93,6 @@ function next() {
   }
   index += 1;
 }
-
 </script>
 </body>
 </html>

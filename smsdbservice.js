@@ -77,12 +77,12 @@ function debug() {
   dump(Array.join(arguments, " "));
 }
 
-function generateUI() {
+/*function generateUI() {
   //TODO make this a lazy service getter
   let uuidGenerator = Cc["@mozilla.org/uuid-generator;1"]
                         .getService(Ci.nsIUUIDGenerator);
   return uuidGenerator.generateUUID().toString();
-}
+}*/
 
 /**
  * SmsDatabaseService
@@ -187,9 +187,10 @@ SmsDatabaseService.prototype = {
     // TODO: Check this: I understand the indexes as a way for quick searching
     //       As we probably want to search by sender, receiver and date,
     //       we need the following indexes.
+    objectStore.createIndex("delivery", "properties.delivery", { unique: false });
     objectStore.createIndex("sender", "properties.sender", { unique: false });
-    objectStore.createIndex("receiver", "properties.receiver", {unique: false});
-    objectStore.createIndex("date", "properties.date", {unique:false});
+    objectStore.createIndex("receiver", "properties.receiver", { unique: false });
+    objectStore.createIndex("date", "properties.date", { unique:false });
 
     debug("Created object stores and indexes");
   },
@@ -290,6 +291,16 @@ SmsDatabaseService.prototype = {
     }
   },
 
+  /**
+   * Put an SMS in the DB.
+   *
+   * @param record
+   *        A record as stored in the DB.
+   * @param successCb
+   *        Callback function to invoque with the record id.
+   * @param errorCb
+   *        Callback function to invoque when there was an error.
+   */
   saveSms: function saveSms(record, successCb, errorCb) {
     //TODO: verify record
     this.newTxn(IDBTransaction.READ_WRITE, function(txn, store) {
@@ -299,23 +310,47 @@ SmsDatabaseService.prototype = {
     }.bind(this), successCb, errorCb);
   },
 
+  /**
+   * Deletes an SMS from the DB.
+   *
+   * @param recordId
+   *        UID of the record to remove.
+   * @param successCb
+   *        Callback to invoque when successfully delete the SMS.
+   * @param errorCb
+   *        Callback to invoque when there was an error.
+   */
   removeSms: function removeSms(recordId, successCb, errorCb) {
-    //TODO: verify record
     this.newTxn(IDBTransaction.READ_WRITE, function(txn, store) {
-      debug("Going to delete contact with id: ", recordId);
+      debug("Going to delete sms with id: ", recordId);
       store.delete(recordId);
     }, successCb, errorCb);
   },
 
-  //TODO: change this for a find function
-  getAllSms: function getAllSms(successCb, failureCb, options) {
+  /**
+   * Find a record in the DB
+   *
+   * @param successCb
+   *        Callback function to invoke with result array.
+   * @param failureCb
+   *        Callback function to invoke when there was an error.
+   * @param options [optional]
+   *        Objects specifying search options. Possible attributes:
+   *        - filterOp
+   */
+  find: function find(successCb, failureCb, options) {
     let self = this;
     this.newTxn(IDBTransaction.READ_ONLY, function (txn, store) {
-      self._findAll(txn, store);
+      if (options && options.filterOp == "equals") {
+        self._findWithIndex(txn, store, options);
+      } else {
+        self._findAll(txn, store);
+      }
     }, successCb, failureCb);
   },
 
   _findAll: function _findAll(txn, store) {
+    //TODO: change getAll. It is not part of indexeddb standard
     store.getAll().onsuccess = function (event) {
       console.log("Request successful. Record count: ",
                   event.target.result.length);
@@ -323,10 +358,34 @@ SmsDatabaseService.prototype = {
     }.bind(this);
   },
 
-  createSentMessage: function createSentMessage(aSender, aReceiver, aBody, aDate) {
-    // We start with an empty DB record.
-    let record = {};
-    return this.makeSms(record, DELIVERY_SENT, aSender, aReceiver, aBody, aDate);
+  _findWithIndex: function _findWithIndex(txn, store, options) {
+    //TODO verify options.filterBy is an array
+
+    let filter_keys = options.filterBy.slice();
+    //TODO check whether filter_keys are valid filters.
+
+    let request;
+    // Query records by first filter. Apply any extra filters later.
+    let key = filter_keys.shift();
+    //TODO check whether filter_key is a valid index
+    debug("Getting index", key);
+    let index = store.index(key);
+    //TODO: change getAll. It is not part of the standard.
+    request = index.getAll(options.filterValue);
+
+    request.onsuccess = function (event) {
+      console.log("Request successful. Record count:",
+                  event.target.result.length);
+      txn.result = event.target.result.map(this.makeSms.bind(this));
+      //TODO filter additional keys
+    }.bind(this);
+  },
+
+  getAllSms: function getAllSms(successCb, failureCb) {
+    let self = this;
+    this.newTxn(IDBTransaction.READ_ONLY, function (txn, store) {
+      self._findAll(txn, store);
+    }, successCb, failureCb);
   },
 
   /**
@@ -335,18 +394,20 @@ SmsDatabaseService.prototype = {
 
   /**
    * Takes some information required to save the message and returns its id.
-   * @param aReceiver
-   *        DOMString containing the address of the reciever of the SMS
-   * @param aBody 
-   *        DOMString containing the body of the SMS
-   * @param aDate
-   *        Date of the SMS delivery
    *
-   * @returns message id
+   * @param aReceiver
+   *        DOMString containing the address of the reciever of the SMS.
+   * @param aBody 
+   *        DOMString containing the body of the SMS.
+   * @param aDate
+   *        Date of the SMS delivery.
+   *
+   * @returns stored message id.
    */
   saveSentMessage: function saveSentMessage(aReceiver, aBody, aDate,
-                                            //TODO: callbacks doesn´t appear
-                                            // in idl ...
+                                            //TODO: callbacks doesn´t appear in idl ...                                         
+                                            // Android backend:
+                                            // http://hg.mozilla.org/mozilla-central/file/78f821cb8974/embedding/android/GeckoSmsManager.java#l582
                                             successCb, failureCb) { 
     let properties = {
       delivery: DELIVERY_SENT,
@@ -362,6 +423,30 @@ SmsDatabaseService.prototype = {
         successCb(record.id);
       };
     }, failureCb);
+  },
+
+  /**
+   * Get a message from its id.
+   *
+   * @param messageId
+   *        UUID of the message retrieved.
+   * @param requestId
+   *        //TODO: tbd
+   * @param processId [optional]
+   *        //TODO: tbd
+   *
+   * //TODO: callbacks are not allowed in current idl
+   *         instead, it returns a nsIDOMMozSmsRequest
+   */
+  getMessage: function getMessage(messageId, 
+                                  requestId, 
+                                  processId,
+                                  successCb,
+                                  errorCb) {
+    let options = {filterBy: ["id"],
+                   filterOp: "equals",
+                   filterValue: messageId};
+    this.find(successCb, errorCb, options);
   }
 };
 
