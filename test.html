@@ -56,13 +56,6 @@ let steps = [
     },onFailure);
   },
   function () {
-    console.log("Getting all sms");
-    window.navigator.mozSmsDatabase.getAllSms(function (smsList) {
-      console.log("smsList.length = " + smsList.length);
-      next();
-    }, onFailure);
-  },
-  function () {
     console.log("Getting sms with id: " + messageId);
     window.navigator.mozSmsDatabase.getMessage(messageId, 0, 0, 
                                                function(message){

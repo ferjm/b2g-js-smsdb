@@ -19,6 +19,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
+ *   Philipp von Weitershausen <philipp@weitershausen.de>
  *   Fernando Jiménez Moreno <ferjm@tid.es>
  *
  * Alternatively, the contents of this file may be used under the terms of
@@ -48,7 +49,7 @@ const DELIVERY_SENT = "sent";
 const CURRENT_ADDRESS = "+34666222111"; 
 
 /**
- * SmsError
+ * SmsDatabaseError
  */
 
 const UNKNOWN_ERROR           = 0;
@@ -59,10 +60,10 @@ const IO_ERROR                = 4;
 const NOT_SUPPORTED_ERROR     = 5;
 const PERMISSION_DENIED_ERROR = 20;
 
-function SmsError(code) {
+function SmsDatabaseError(code) {
   this.code = code;
 }
-SmsError.prototype = {
+SmsDatabaseError.prototype = {
   UNKNOWN_ERROR:           UNKNOWN_ERROR,
   INVALID_ARGUMENT_ERROR:  INVALID_ARGUMENT_ERROR,
   TIMEOUT_ERROR:           TIMEOUT_ERROR,
@@ -80,16 +81,10 @@ function debug() {
 /**
  * SmsDatabaseService
  */
-function SmsDatabaseService() {
+function SmsDatabase(aWindow) {
+  this.window = aWindow;
 }
-SmsDatabaseService.prototype = {
-  
-  /**
-   * nsIDOMGlobalPropertyInitializer implementation
-   */
-  init: function(aWindow) {
-    this.window = aWindow;
-  },
+SmsDatabase.prototype = {
   
   /**
    * Cache the DB here.
@@ -138,18 +133,18 @@ SmsDatabaseService.prototype = {
           debug("No idea what to do with old database version:",
                 event.oldVersion);
           event.target.transaction.abort();
-          failureCb(new SmsError(IO_ERROR));
+          failureCb(new SmsDatabaseError(IO_ERROR));
           break;
       }
     };
     request.onerror = function (event) {
       debug("Failed to open database:", DB_NAME);
       //TODO look at event.target.Code and change error constant accordingly
-      failureCb(new SmsError(IO_ERROR));
+      failureCb(new SmsDatabaseError(IO_ERROR));
     };
     request.onblocked = function (event) {
       debug("Opening database request is blocked.");
-      failureCb(new SmsError(IO_ERROR));
+      failureCb(new SmsDatabaseError(IO_ERROR));
     };
   },
  
@@ -216,7 +211,7 @@ SmsDatabaseService.prototype = {
       txn.onerror = function (event) {
         debug("Caught error on transaction", event.target.errorCode);
         //TODO look at event.target.errorCode and change error constant accordingly
-        failureCb(new SmsError(UNKNOWN_ERROR));
+        failureCb(new SmsDatabaseError(UNKNOWN_ERROR));
       };
 
       callback(txn, store);
@@ -237,7 +232,7 @@ SmsDatabaseService.prototype = {
    */
   makeSms: function makeSms(record, 
                             properties) {
-    let smsService = this;
+    let smsDatabase = this;
 
     let sms = record.properties;
     if (!sms) {
@@ -258,12 +253,12 @@ SmsDatabaseService.prototype = {
     // writeable, configurable, enumerable.
     Object.defineProperty(sms, "save",
                           {value: function save(successCb, errorCb){
-      smsService.saveSms(record, successCb, errorCb);
+      smsDatabase.saveSms(record, successCb, errorCb);
     }});
 
     Object.defineProperty(sms, "remove",
                           {value: function remove(successCb, errorCb) {
-      smsService.deleteMessage(successCb, errorCb);
+      smsDatabase.deleteMessage(successCb, errorCb);
     }});
     //TODO: getter and setter are not working :(
     /*
@@ -280,7 +275,7 @@ SmsDatabaseService.prototype = {
 
   updateRecordMetadata: function updateRecordMetadata(record) {
     if (!record.id) {
-      record.id = generateUUID();
+      record.id = this.generateUUID();
     }
   },
 
@@ -382,9 +377,42 @@ SmsDatabaseService.prototype = {
   },
 
   /**
-   * SmsDatabaseService API
+   * Generate a UUID according to RFC4122 v4 (random UUIDs)
    */
+  generateUUID: function generateUUID() {
+    var chars = '0123456789abcdef';
+    var uuid = [];
+    var choice;
 
+    uuid[8] = uuid[13] = uuid[18] = uuid[23] = '-';
+    uuid[14] = '4';
+
+    for (var i = 0; i < 36; i++) {
+      if (uuid[i]) {
+        continue;
+      }
+      choice = Math.floor(Math.random() * 16);
+      // Set bits 6 and 7 of clock_seq_hi to 0 and 1, respectively.
+      // (cf. RFC4122 section 4.4)
+      uuid[i] = chars[(i == 19) ? (choice & 3) | 8 : choice];
+    }
+
+    return uuid.join('');
+  }
+};
+
+
+function SmsDatabaseService() {
+}
+SmsDatabaseService.prototype = {
+  /**
+   * nsIDOMGlobalPropertyInitializer implementation
+   */
+  init: function(aWindow) {
+    this.window = aWindow;
+    this.smsDB = new SmsDatabase(aWindow);
+  },
+  
   /**
    * Takes some information required to save the message and returns its id.
    *
@@ -409,7 +437,7 @@ SmsDatabaseService.prototype = {
       body:     aBody,
       date:     aDate
     };
-    let sms = this.makeSms({}, properties);
+    let sms = this.smsDB.makeSms({}, properties);
     sms.save(function (record) {
       console.log ("New sms id: " + record.id);
       if (record.id) {
@@ -439,7 +467,7 @@ SmsDatabaseService.prototype = {
     let options = {filterBy: ["id"],
                    filterOp: "equals",
                    filterValue: messageId};
-    this.find(successCb, errorCb, options);
+    this.smsDB.find(successCb, errorCb, options);
   }
 };
 
@@ -455,27 +483,3 @@ function debug() {
   args.unshift("DEBUG");
   console.log.apply(console, args);
 }
-
-/**
- * Generate a UUID according to RFC4122 v4 (random UUIDs)
- */
-function generateUUID() {
-  var chars = '0123456789abcdef';
-  var uuid = [];
-  var choice;
-
-  uuid[8] = uuid[13] = uuid[18] = uuid[23] = '-';
-  uuid[14] = '4';
-
-  for (var i = 0; i < 36; i++) {
-    if (uuid[i]) {
-      continue;
-    }
-    choice = Math.floor(Math.random() * 16);
-    // Set bits 6 and 7 of clock_seq_hi to 0 and 1, respectively.
-    // (cf. RFC4122 section 4.4)
-    uuid[i] = chars[(i == 19) ? (choice & 3) | 8 : choice];
-  }
-
-  return uuid.join('');
-};
