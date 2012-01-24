@@ -402,6 +402,69 @@ SmsDatabase.prototype = {
 };
 
 
+/**
+ * MessagesListManager
+ */
+function MessageListManager() {
+  _cursors = [];
+
+  // Get the instance of MessageListManager
+  // If there is none, instanciate one
+  let getInstance: function () {
+    if (!this.messageListManager) {
+      this.messageListManager = this.createInstance();
+    }
+    return this.messageListManager;
+  },
+
+  // Create an instance of the MessageListManager class
+  let createInstance: function () {
+    // Public methods
+    return {
+      /**
+       * Add a list to the manager
+       *
+       * @param cursor
+       *        IDBCursor represents a cursor for traversing or iterating over
+       *        a database search
+       *
+       * @return the id of the list
+       */
+      add: function(cursor) {
+      },
+
+      /**
+       * Get a cursor for traversing or iterating over a message list
+       *
+       * @param id
+       *        Number representing the id of the message list to retrieve
+       *
+       * @return IDBCursor for traversing or iterating over a database search
+       */
+      get: function(id) {
+      },
+      
+     /**
+      * Remove a message list according to the passed id
+      *
+      * @param id
+      *        Number representing the id of the message list to remove
+      */
+      remove: function(id) {
+      },
+
+     /**
+      * Remove all message lists in the manager
+      */
+      clear: function() {
+      }
+    }
+  }
+
+  return getInstance();
+};
+
+
 function SmsDatabaseService() {
 }
 SmsDatabaseService.prototype = {
