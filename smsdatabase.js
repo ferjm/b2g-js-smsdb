@@ -92,6 +92,16 @@ SmsDatabase.prototype = {
    db: null,
 
   /**
+   * DB request queue.
+   */
+   requestQueue: [],
+
+  /**
+   * Flag to indicate that a transaction is open.
+   */
+   onTxn: false,
+
+  /**
    * Prepare the database. This may include opening the database and upgrading
    * it to the latest schema version.
    * 
@@ -183,6 +193,19 @@ SmsDatabase.prototype = {
     debug("Created object stores and indexes");
   },
 
+  nextRequest: function nextRequest() {
+    // If there is no pending request it just returns.
+    if (this.requestQueue.length <= 0) {      
+      return;
+    }
+    // It executes the next request in the queue
+    let params = this.requestQueue.shift();
+    newTxn(params["txn_type"], 
+           params["callback"], 
+           params["successCb"], 
+           params["failureCb"]);
+  },
+
   /**
    * Start a new transaction.
    * 
@@ -197,24 +220,46 @@ SmsDatabase.prototype = {
    *        Error callback to call when an error is encountered.
    */
   newTxn: function newTxn(txn_type, callback, successCb, failureCb) {
+    let self = this;
     this.ensureDB(function (db) {
-      debug("Starting new transaction", txn_type);
-      let txn = db.transaction([STORE_NAME], txn_type);
-      debug("Retrieving object store", STORE_NAME);
-      let store = txn.objectStore(STORE_NAME);
+      // Check if there is already an open transaction with sms objectStore
+      // scope
+      if (self.onTxn) {
+        // Queues the request until the current transaction is done
+        self.requestQueue.push({"txn_type": txn_type,
+                                "callback": callback,
+                                "successCb": successCb,
+                                "failureCb": failureCb});
+      } else {
+        debug("Starting new transaction", txn_type);
+        self.onTxn = true;
+        let txn = db.transaction([STORE_NAME], txn_type);
+        debug("Retrieving object store", STORE_NAME);
+        let store = txn.objectStore(STORE_NAME);
+      
+        txn.oncomplete = function (event) {
+          debug("Transaction complete. Returning to callback.");
+          // At this point the transaction is complete and we can continue
+          // with the queued requests
+          self.onTxn = false;
+          self.nextRequest();         
+          successCb(txn.result);
+        };
+        // The transaction will automatically be aborted.
+        txn.onerror = function (event) {
+          debug("Caught error on transaction", event.target.errorCode);
+          //TODO look at event.target.errorCode and change error constant accordingly
+          // At this point the transaction is complete and we can continue
+          // with the queued requests
+          self.onTxn = false;
+          self.nextRequest();
+          failureCb(new SmsDatabaseError(UNKNOWN_ERROR));
+        };
 
-      txn.oncomplete = function (event) {
-        debug("Transaction complete. Returning to callback.");
-        successCb(txn.result);
-      };
-      // The transaction will automatically be aborted.
-      txn.onerror = function (event) {
-        debug("Caught error on transaction", event.target.errorCode);
-        //TODO look at event.target.errorCode and change error constant accordingly
-        failureCb(new SmsDatabaseError(UNKNOWN_ERROR));
-      };
+        //TODO: add onabort
 
-      callback(txn, store);
+        callback(txn, store);
+      }
     }, failureCb);
   },
 
@@ -388,7 +433,7 @@ SmsDatabase.prototype = {
 let MessageListManager = (function() {
   // Private member containing the list of IDBCursors associated with each
   // message list.
-  _cursors = {};
+  _cursors : {};
 
   // Public methods for managing the message lists.
   return {
@@ -421,7 +466,7 @@ let MessageListManager = (function() {
     get: function(uuid) {
       //TODO: check id as valid uuid. Not sure if mz has a function for that.
       if (this._cursors[uuid]) {
-        return this._cursors[uuid]);
+        return this._cursors[uuid];
       }
       debug("Trying to get an unknown list!");
       return null;
