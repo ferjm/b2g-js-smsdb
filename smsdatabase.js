@@ -275,7 +275,7 @@ SmsDatabase.prototype = {
 
   updateRecordMetadata: function updateRecordMetadata(record) {
     if (!record.id) {
-      record.id = this.generateUUID();
+      record.id = generateUUID();
     }
   },
 
@@ -375,96 +375,81 @@ SmsDatabase.prototype = {
       self._findAll(txn, store);
     }, successCb, failureCb);
   },
-
-  /**
-   * Generate a UUID according to RFC4122 v4 (random UUIDs)
-   */
-  generateUUID: function generateUUID() {
-    var chars = '0123456789abcdef';
-    var uuid = [];
-    var choice;
-
-    uuid[8] = uuid[13] = uuid[18] = uuid[23] = '-';
-    uuid[14] = '4';
-
-    for (var i = 0; i < 36; i++) {
-      if (uuid[i]) {
-        continue;
-      }
-      choice = Math.floor(Math.random() * 16);
-      // Set bits 6 and 7 of clock_seq_hi to 0 and 1, respectively.
-      // (cf. RFC4122 section 4.4)
-      uuid[i] = chars[(i == 19) ? (choice & 3) | 8 : choice];
-    }
-
-    return uuid.join('');
-  }
 };
 
 
 /**
  * MessagesListManager
+ *
+ * This object keeps a list of IDBCursors to iterate over messages lists
+ * and provides the functions to manage the insertion and deletion of this
+ * cursors.
  */
-function MessageListManager() {
-  _cursors = [];
+let MessageListManager = (function() {
+  // Private member containing the list of IDBCursors associated with each
+  // message list.
+  _cursors = {};
 
-  // Get the instance of MessageListManager
-  // If there is none, instanciate one
-  let getInstance: function () {
-    if (!this.messageListManager) {
-      this.messageListManager = this.createInstance();
-    }
-    return this.messageListManager;
-  },
+  // Public methods for managing the message lists.
+  return {
+    /**
+     * Add a list to the manager.
+     *
+     * @param cursor
+     *        IDBCursor represents a cursor for traversing or iterating over
+     *        a database search.
+     *
+     * @return the id of the list.
+     */
+    add: function(cursor) {
+      // Generate the message list uuid.
+      // TODO: use mz uuid generator component.
+      let uuid = generateUUID();
+      // Insert the cursor and the message list id.
+      this._cursors[uuid] = cursor;
+      return uuid;
+    },
 
-  // Create an instance of the MessageListManager class
-  let createInstance: function () {
-    // Public methods
-    return {
-      /**
-       * Add a list to the manager
-       *
-       * @param cursor
-       *        IDBCursor represents a cursor for traversing or iterating over
-       *        a database search
-       *
-       * @return the id of the list
-       */
-      add: function(cursor) {
-      },
-
-      /**
-       * Get a cursor for traversing or iterating over a message list
-       *
-       * @param id
-       *        Number representing the id of the message list to retrieve
-       *
-       * @return IDBCursor for traversing or iterating over a database search
-       */
-      get: function(id) {
-      },
-      
-     /**
-      * Remove a message list according to the passed id
-      *
-      * @param id
-      *        Number representing the id of the message list to remove
-      */
-      remove: function(id) {
-      },
-
-     /**
-      * Remove all message lists in the manager
-      */
-      clear: function() {
+    /**
+     * Get a cursor for traversing or iterating over a message list
+     *
+     * @param uuid
+     *        Number representing the id of the message list to retrieve
+     *
+     * @return IDBCursor for traversing or iterating over a database search
+     */
+    get: function(uuid) {
+      //TODO: check id as valid uuid. Not sure if mz has a function for that.
+      if (this._cursors[uuid]) {
+        return this._cursors[uuid]);
       }
+      debug("Trying to get an unknown list!");
+      return null;
+    },
+    
+   /**
+    * Remove a message list according to the passed id
+    *
+    * @param id
+    *        Number representing the id of the message list to remove
+    */
+    remove: function(uuid) {
+      delete this._cursors[uuid];
+    },
+
+   /**
+    * Remove all message lists in the manager
+    */
+    clear: function() {
+      this[_cursors] = {};
     }
   }
-
-  return getInstance();
-};
+})();
 
 
+/**
+ * SmsDatabaseService
+ */ 
 function SmsDatabaseService() {
 }
 SmsDatabaseService.prototype = {
@@ -490,8 +475,6 @@ SmsDatabaseService.prototype = {
    */
   saveSentMessage: function saveSentMessage(aReceiver, aBody, aDate,
                                             //TODO: callbacks doesn´t appear in idl ...                                         
-                                            // Android backend:
-                                            // http://hg.mozilla.org/mozilla-central/file/78f821cb8974/embedding/android/GeckoSmsManager.java#l582
                                             successCb, failureCb) { 
     let properties = {
       delivery: DELIVERY_SENT,
@@ -533,6 +516,31 @@ SmsDatabaseService.prototype = {
     this.smsDB.find(successCb, errorCb, options);
   }
 };
+
+/**
+ * Generate a UUID according to RFC4122 v4 (random UUIDs)
+ */
+function generateUUID() {
+  var chars = '0123456789abcdef';
+  var uuid = [];
+  var choice;
+
+  uuid[8] = uuid[13] = uuid[18] = uuid[23] = '-';
+  uuid[14] = '4';
+
+  for (var i = 0; i < 36; i++) {
+    if (uuid[i]) {
+      continue;
+    }
+    choice = Math.floor(Math.random() * 16);
+    // Set bits 6 and 7 of clock_seq_hi to 0 and 1, respectively.
+    // (cf. RFC4122 section 4.4)
+    uuid[i] = chars[(i == 19) ? (choice & 3) | 8 : choice];
+  }
+
+  return uuid.join('');
+};
+
 
 /**
  * Fake setup for HTML
