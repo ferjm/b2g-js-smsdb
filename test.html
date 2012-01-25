@@ -8,7 +8,6 @@
 
 <script type="application/javascript;version=1.8" src="smsdatabase.js"></script>
 <script type="application/javascript;version=1.8">
-
 let sample_sms = {
   delivery: "sent",
   sender: "+34666222111",
@@ -47,18 +46,17 @@ let steps = [
   },
   function () {    
     console.log("Adding new sms with the SmsDatabaseService API", sample_sms);
-    window.navigator.mozSmsDatabase.saveSentMessage(sample_sms.receiver,
-                                                    sample_sms.body,
-                                                    sample_sms.timestamp,
-                                                    function (id){
-      messageId = id;
-      onSuccess(id);
+    window.navigator.mozSmsDatabase.saveSentMessageOWD(sample_sms.receiver,
+                                                       sample_sms.body,
+                                                       sample_sms.timestamp,
+                                                       function (record){      
+      messageId = record.id;
+      onSuccess(record);
     },onFailure);
   },
   function () {
     console.log("Getting sms with id: " + messageId);
-    window.navigator.mozSmsDatabase.getMessage(messageId, 0, 0, 
-                                               function(message){
+    window.navigator.mozSmsDatabase.getMessageOWD(messageId, function(message){
       console.log("sms.sender = " + message[0].sender + 
                   "\nsms.receiver = " + message[0].receiver +
                   "\nsms.body = " + message[0].body);
@@ -89,3 +87,4 @@ function next() {
 </script>
 </body>
 </html>
+

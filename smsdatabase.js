@@ -1,46 +1,27 @@
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is WebSms.
- *
- * The Initial Developer of the Original Code is
- * the Mozila Foundation
- * Portions created by the Initial Developer are Copyright (C) 2011
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Philipp von Weitershausen <philipp@weitershausen.de>
- *   Fernando Jiménez Moreno <ferjm@tid.es>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 "use strict";
 
+//const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
+
+//Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+//Cu.import("resource://gre/modules/Services.jsm");
+
+//const SMS_DATABASE_SERVICE_CONTRACTID = "@mozilla.org/sms/smsdatabaseservice;1";
+//const SMS_DATABASE_SERVICE_CID = Components.ID("{2454c2a1-efdd-4d96-83bd51a29a21f5ab}");
+
+const DEBUG = true;
 const DB_NAME = "sms";
 const DB_VERSION = 1;
 const STORE_NAME = "sms";
+
+const eNoError = 0;
+const eNoSignalError = 1;
+const eNotFoundError = 2;
+const eUnknownError = 3;
+const eInternalError = 4;
 
 const DELIVERY_RECEIVED = "received";
 const DELIVERY_SENT = "sent";
@@ -48,519 +29,276 @@ const DELIVERY_SENT = "sent";
 // TODO: own number must be retrieved from the RIL
 const CURRENT_ADDRESS = "+34666222111"; 
 
+/*XPCOMUtils.defineLazyServiceGetter(this, "gSmsService",
+                                   "@mozilla.org/sms/smsservice;1",
+                                   "nsISmsService");
+//TODO see bug 720632
+XPCOMUtils.defineLazyServiceGetter(this, "gSmsRequestManager",
+                                   "XXX",
+                                   "Ci.nsISmsRequestManagerXXX");
+*/
+
 /**
- * SmsDatabaseError
+ * Fake implementation of nsISmsService
  */
-
-const UNKNOWN_ERROR           = 0;
-const INVALID_ARGUMENT_ERROR  = 1;
-const TIMEOUT_ERROR           = 2;
-const PENDING_OPERATION_ERROR = 3;
-const IO_ERROR                = 4;
-const NOT_SUPPORTED_ERROR     = 5;
-const PERMISSION_DENIED_ERROR = 20;
-
-function SmsDatabaseError(code) {
-  this.code = code;
-}
-SmsDatabaseError.prototype = {
-  UNKNOWN_ERROR:           UNKNOWN_ERROR,
-  INVALID_ARGUMENT_ERROR:  INVALID_ARGUMENT_ERROR,
-  TIMEOUT_ERROR:           TIMEOUT_ERROR,
-  PENDING_OPERATION_ERROR: PENDING_OPERATION_ERROR,
-  IO_ERROR:                IO_ERROR,
-  NOT_SUPPORTED_ERROR:     NOT_SUPPORTED_ERROR,
-  PERMISSION_DENIED_ERROR: PERMISSION_DENIED_ERROR
-};
-
-
-function debug() {
-  dump(Array.join(arguments, " "));
-}
+let gSmsService = (function() {
+  return {
+    createSmsMessage: function(id,
+                               delivery,
+                               sender,
+                               receiver,
+                               body,
+                               timestamp) {
+      return { "id": id,
+               "delivery": delivery,
+               "sender": sender,
+               "receiver": receiver,
+               "body": body,
+               "timestamp": timestamp };
+    }
+  };
+})();
 
 /**
  * SmsDatabaseService
  */
-function SmsDatabase(aWindow) {
-  this.window = aWindow;
+function SmsDatabaseService() {
+  this._messageLists = Object.create(null);
 }
-SmsDatabase.prototype = {
-  
+SmsDatabaseService.prototype = {
+
+  /*classID:   SMSDATABASESERVICE_CID,
+  classInfo: XPCOMUtils.generateCI({classID: SMSDATABASESERVICE_CID,
+                                    classDescription: "SmsDatabaseService",
+                                    interfaces: [Ci.nsISmsDatabaseService]}),
+  QueryInterface: XPCOMUtils.generateQI([Ci.nsISmsDatabaseService]),*/
+
   /**
    * Cache the DB here.
    */
-   db: null,
+  db: null,
 
   /**
-   * DB request queue.
-   */
-   requestQueue: [],
-
-  /**
-   * Flag to indicate that a transaction is open.
-   */
-   onTxn: false,
+   * Init method just for HTML testing
+   */ 
+  init: function init(aWindow) {
+    this.window = aWindow;
+  },
 
   /**
    * Prepare the database. This may include opening the database and upgrading
    * it to the latest schema version.
-   * 
+   *
+   * @param callback
+   *        Function that takes an error and db argument. It is called when
+   *        the database is ready to use or if an error occurs while preparing
+   *        the database.
+   *
    * @return (via callback) a database ready for use.
    */
-  ensureDB: function ensureDB(callback, failureCb) {
+  ensureDB: function ensureDB(callback) {
     if (this.db) {
-      debug("ensureDB: already have a database, returning early.");
-      callback(this.db);
+      if (DEBUG) debug("ensureDB: already have a database, returning early.");
+      callback(null, this.db);
       return;
     }
 
     let self = this;
     function gotDB(db) {
       self.db = db;
-      callback(db);
+      callback(null, db);
     }
-
+    
     let indexedDB = this.window.mozIndexedDB;
     let request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onsuccess = function (event) {
-      debug("Opened database:", DB_NAME, DB_VERSION);
+      if (DEBUG) debug("Opened database:", DB_NAME, DB_VERSION);
       gotDB(event.target.result);
     };
     request.onupgradeneeded = function (event) {
-      debug("Database needs upgrade:", DB_NAME,
-            event.oldVersion, event.newVersion);
-      debug("Correct new database version:", event.newVersion == DB_VERSION);
+      if (DEBUG) {
+        debug("Database needs upgrade:", DB_NAME,
+              event.oldVersion, event.newVersion);
+        debug("Correct new database version:", event.newVersion == DB_VERSION);
+      }
 
       let db = event.target.result;
 
       switch (event.oldVersion) {
         case 0:
-          debug("New database");
+          if (DEBUG) debug("New database");
           self.createSchema(db);
           break;
 
         default:
-          debug("No idea what to do with old database version:",
-                event.oldVersion);
           event.target.transaction.abort();
-          failureCb(new SmsDatabaseError(IO_ERROR));
+          callback("Old database version: " + event.oldVersion, null);
           break;
       }
     };
     request.onerror = function (event) {
-      debug("Failed to open database:", DB_NAME);
       //TODO look at event.target.Code and change error constant accordingly
-      failureCb(new SmsDatabaseError(IO_ERROR));
+      callback("Error opening database!", null);
     };
     request.onblocked = function (event) {
-      debug("Opening database request is blocked.");
-      failureCb(new SmsDatabaseError(IO_ERROR));
+      callback("Opening database request is blocked.", null);
     };
-  },
- 
-  /**
-   * Create the initial database schema.
-   *
-   * The schema of records stored, according to nsIDOMMozSmsMessage is as 
-   * follows:
-   * 
-   * {
-   *  id:        number,     // UUID.
-   *  properties {
-   *    delivery:  number,   // Should be "sent" or "received" //TODO: howto enum type??
-   *    sender:    string,   // Address of the sender of the Sms.
-   *    receiver:  string,   // Address of the receiver of the Sms //TODO: shouldn´t be []
-   *    body:      string,   // Content of the Sms.
-   *    date:      date,     // Date of the delivery of the Sms.
-   *  }
-   * }
-   */
-  createSchema: function createSchema(db) {
-    let objectStore = db.createObjectStore(STORE_NAME, {keyPath: "id"});
-
-    // Metadata indexes
-    objectStore.createIndex("id", "id", { unique: true });
-
-    // Index for the Sms addresses
-    // TODO: Check this: I understand the indexes as a way for quick searching
-    //       As we probably want to search by sender, receiver and date,
-    //       we need the following indexes.
-    objectStore.createIndex("delivery", "properties.delivery", { unique: false });
-    objectStore.createIndex("sender", "properties.sender", { unique: false });
-    objectStore.createIndex("receiver", "properties.receiver", { unique: false });
-    objectStore.createIndex("date", "properties.date", { unique:false });
-
-    debug("Created object stores and indexes");
-  },
-
-  nextRequest: function nextRequest() {
-    // If there is no pending request it just returns.
-    if (this.requestQueue.length <= 0) {      
-      return;
-    }
-    // It executes the next request in the queue
-    let params = this.requestQueue.shift();
-    newTxn(params["txn_type"], 
-           params["callback"], 
-           params["successCb"], 
-           params["failureCb"]);
   },
 
   /**
    * Start a new transaction.
-   * 
+   *
    * @param txn_type
    *        Type of transaction (e.g. IDBTransaction.READ_WRITE)
    * @param callback
    *        Function to call when the transaction is available. It will
    *        be invoked with the transaction and the 'sms' object store.
-   * @param successCb [optional]
+   * @param oncompleteCb [optional]
    *        Success callback to call on a successful transaction commit.
-   * @param failureCb [optional]
+   * @param onerrorCb [optional]
    *        Error callback to call when an error is encountered.
    */
-  newTxn: function newTxn(txn_type, callback, successCb, failureCb) {
-    let self = this;
-    this.ensureDB(function (db) {
-      // Check if there is already an open transaction with sms objectStore
-      // scope
-      if (self.onTxn) {
-        // Queues the request until the current transaction is done
-        self.requestQueue.push({"txn_type": txn_type,
-                                "callback": callback,
-                                "successCb": successCb,
-                                "failureCb": failureCb});
-      } else {
-        debug("Starting new transaction", txn_type);
-        self.onTxn = true;
-        let txn = db.transaction([STORE_NAME], txn_type);
-        debug("Retrieving object store", STORE_NAME);
-        let store = txn.objectStore(STORE_NAME);
-      
-        txn.oncomplete = function (event) {
-          debug("Transaction complete. Returning to callback.");
-          // At this point the transaction is complete and we can continue
-          // with the queued requests
-          self.onTxn = false;
-          self.nextRequest();         
-          successCb(txn.result);
-        };
-        // The transaction will automatically be aborted.
-        txn.onerror = function (event) {
-          debug("Caught error on transaction", event.target.errorCode);
-          //TODO look at event.target.errorCode and change error constant accordingly
-          // At this point the transaction is complete and we can continue
-          // with the queued requests
-          self.onTxn = false;
-          self.nextRequest();
-          failureCb(new SmsDatabaseError(UNKNOWN_ERROR));
-        };
-
-        //TODO: add onabort
-
-        callback(txn, store);
+  newTxn: function newTxn(txn_type, callback, oncompleteCb, onerrorCb) {
+    this.ensureDB(function (error, db) {
+      if (error) {
+        if (DEBUG) debug("Could not open database: " + error);
+        callback(error, null, null);
+        return;
       }
-    }, failureCb);
+      if (DEBUG) debug("Starting new transaction", txn_type);
+      let txn = db.transaction([STORE_NAME], txn_type);
+      if (DEBUG) debug("Retrieving object store", STORE_NAME);
+      let store = txn.objectStore(STORE_NAME);
+      txn.oncomplete = oncompleteCb;
+      txn.onerror = onerrorCb;
+      callback(txn, store);
+    });
   },
 
   /**
-   * Create a new Sms object.
+   * Create the initial database schema.
    *
-   * @param record
-   *        A record as stored in IndexedDB
-   * @param properties [optional]
-   *        Object containing initial field values
-   *
-   * @return an Sms object.
-   *
-   * The returned Sms object closes over the IndexedDB record.
+   * TODO need to worry about number normalizaton somewhere...
+   * TODO full text search on body???
    */
-  makeSms: function makeSms(record, 
-                            properties) {
-    let smsDatabase = this;
+  createSchema: function createSchema(db) {
+    let objectStore = db.createObjectStore(STORE_NAME, {keyPath: "id"});
+    objectStore.createIndex("id", "id", { unique: true });
+    objectStore.createIndex("delivery", "delivery", { unique: false });
+    objectStore.createIndex("sender", "sender", { unique: false });
+    objectStore.createIndex("receiver", "receiver", { unique: false });
+    objectStore.createIndex("timestamp", "timestamp", { unique:false });
+    if (DEBUG) debug("Created object stores and indexes");
+  },
 
-    let sms = record.properties;
-    if (!sms) {
-      sms = record.properties = {
-        delivery:   null,
-        sender:     null,
-        receiver:   null,
-        body:       null,
-        date:       null
+  // nsISmsDatabaseService
+
+  //TODO this method should not be synchronous (bug 720653)
+  saveSentMessage: function saveSentMessage(receiver, body, date) {
+    let id = XXX;
+    return id;
+  },
+
+  saveSentMessageOWD: function saveSentMessage(receiver, body, date, 
+                                               successCb, failureCb) {
+    let record = gSmsService.createSmsMessage(generateUUID(),
+                                              DELIVERY_SENT,
+                                              CURRENT_ADDRESS,
+                                              receiver,
+                                              body,
+                                              date);
+    this.newTxn(IDBTransaction.READ_WRITE, function(txn, store, error) {
+        if (error) {
+          failureCb("Transaction error");
+        }
+        let request = store.put(record);        
+        request.onsuccess = function (event) {
+          txn.result = record;
+        };
+      }, function (event) {
+        debug("saveSentMessageOWD. result: " + event.target.result);
+        successCb(event.target.result);
+      }, failureCb);
+  },
+
+  //TODO need to save incoming SMS, too!
+
+  getMessage: function getMessage(messageId, requestId) {
+    this.newTxn(IDBTransaction.READ_ONLY, function (error, txn, store) {
+      let request = store.getAll(messageId);
+
+      txn.oncomplete = function (event) {
+        if (DEBUG) debug("Transaction complete, notifying request manager.");
+
+        let data = request.result[0];
+        if (!data) {
+          gSmsRequestManager.notifyGetSmsFailed(requestId, eNotFoundError);
+          return;
+        }
+        let message = gSmsService.createSmsMessage(data.id,
+                                                   data.delivered,
+                                                   data.sender,
+                                                   data.receiver,
+                                                   data.body,
+                                                   data.timestamp);
+        gSmsRequestManager.notifyGotSms(requestId, message);
       };
-    }
-
-    for (let field in properties) {
-      sms[field] = properties[field];
-    }
-
-    // Use Object.defineProperty() to ensure these methods aren´t
-    // writeable, configurable, enumerable.
-    Object.defineProperty(sms, "save",
-                          {value: function save(successCb, errorCb){
-      smsDatabase.saveSms(record, successCb, errorCb);
-    }});
-
-    Object.defineProperty(sms, "remove",
-                          {value: function remove(successCb, errorCb) {
-      smsDatabase.deleteMessage(successCb, errorCb);
-    }});
-    //TODO: getter and setter are not working :(
-    /*
-    Object.defineProperty(sms, "id", {enumerable: true,
-                                      get: function () {
-      return sms.id;
-    },                                set: function(id) {
-      sms.id = id;
-    }});*/
-    
-    Object.seal(sms);
-    return sms;
+      txn.onerror = function (event) {
+        if (DEBUG) debug("Caught error on transaction", event.target.errorCode);
+        //TODO look at event.target.errorCode, pick appropriate error constant
+        gSmsRequestManager.notifyGetSmsFailed(requestId, eInternalError);
+      };
+    });
   },
 
-  updateRecordMetadata: function updateRecordMetadata(record) {
-    if (!record.id) {
-      record.id = generateUUID();
-    }
+  getMessageOWD: function getMessageOWD(messageId, successCb, failureCb) {
+    this.newTxn(IDBTransaction.READ_ONLY, function (txn, store, error) {
+        let request = store.getAll(messageId);
+        request.onsuccess = function (event) {
+          debug("Request successfull. Record count: ", 
+                event.target.result.length);
+          txn.result = event.target.result;
+        };
+      }, function (event) {
+        debug("getMessageOWD. Transaction complete");
+        successCb(event.target.result);
+      }, failureCb);
   },
 
-  /**
-   * Put an SMS in the DB.
-   *
-   * @param record
-   *        A record as stored in the DB.
-   * @param successCb
-   *        Callback function to invoque with the record id.
-   * @param errorCb
-   *        Callback function to invoque when there was an error.
-   */
-  saveSms: function saveSms(record, successCb, errorCb) {
-    //TODO: verify record
-    this.newTxn(IDBTransaction.READ_WRITE, function(txn, store) {
-      this.updateRecordMetadata(record);
-      store.put(record);
-      txn.result = record;
-    }.bind(this), successCb, errorCb);
+  deleteMessage: function deleteMessage(messageId, requestId) {
+    this.newTxn(function (error, txn, store) {
+      let request = store.delete(messageId);
+      txn.oncomplete = function (event) {
+        gSmsRequestManager.notifySmsDeleted(requestId, true);
+      };
+      txn.onerror = function (event) {
+        if (DEBUG) debug("Caught error on transaction", event.target.errorCode);
+        //TODO look at event.target.errorCode, pick appropriate error constant
+        gSmsRequestManager.notifySmsDeleteFailed(requestId, eInternalError);
+      };
+    });
   },
 
-  /**
-   * Deletes an SMS from the DB.
-   *
-   * @param recordId
-   *        UID of the record to remove.
-   * @param successCb
-   *        Callback to invoque when successfully delete the SMS.
-   * @param errorCb
-   *        Callback to invoque when there was an error.
-   */
-  removeSms: function removeSms(recordId, successCb, errorCb) {
-    this.newTxn(IDBTransaction.READ_WRITE, function(txn, store) {
-      debug("Going to delete sms with id: ", recordId);
-      store.delete(recordId);
-    }, successCb, errorCb);
+//The message list stuff could be elegantly implemented using IDB cursors,
+//except we'd need to keep the txn open, so maybe not such a good idea
+//(unless we find a way to queue other requests while a list is being
+//processed, but that sounds messy).
+
+  createMessageList: function createMessageList(filter, reverse, requestId) {
+    //TODO
   },
 
-  /**
-   * Find a record in the DB
-   *
-   * @param successCb
-   *        Callback function to invoke with result array.
-   * @param failureCb
-   *        Callback function to invoke when there was an error.
-   * @param options [optional]
-   *        Objects specifying search options. Possible attributes:
-   *        - filterOp
-   */
-  find: function find(successCb, failureCb, options) {
-    let self = this;
-    this.newTxn(IDBTransaction.READ_ONLY, function (txn, store) {
-      if (options && options.filterOp == "equals") {
-        self._findWithIndex(txn, store, options);
-      } else {
-        self._findAll(txn, store);
-      }
-    }, successCb, failureCb);
+  getNextMessageInList: function getNextMessageInList(listId, requestId, processId) {
+    //TODO
   },
 
-  _findAll: function _findAll(txn, store) {
-    //TODO: change getAll. It is not part of indexeddb standard
-    store.getAll().onsuccess = function (event) {
-      console.log("Request successful. Record count: ",
-                  event.target.result.length);
-      txn.result = event.target.result.map(this.makeSms.bind(this));
-    }.bind(this);
-  },
+  clearMessageList: function clearMessageList(listId) {
+    //TODO
+  }
 
-  _findWithIndex: function _findWithIndex(txn, store, options) {
-    //TODO verify options.filterBy is an array
-
-    let filter_keys = options.filterBy.slice();
-    //TODO check whether filter_keys are valid filters.
-
-    let request;
-    // Query records by first filter. Apply any extra filters later.
-    let key = filter_keys.shift();
-    //TODO check whether filter_key is a valid index
-    debug("Getting index", key);
-    let index = store.index(key);
-    //TODO: change getAll. It is not part of the standard.
-    request = index.getAll(options.filterValue);
-
-    request.onsuccess = function (event) {
-      console.log("Request successful. Record count:",
-                  event.target.result.length);
-      txn.result = event.target.result.map(this.makeSms.bind(this));
-      //TODO filter additional keys
-    }.bind(this);
-  },
-
-  getAllSms: function getAllSms(successCb, failureCb) {
-    let self = this;
-    this.newTxn(IDBTransaction.READ_ONLY, function (txn, store) {
-      self._findAll(txn, store);
-    }, successCb, failureCb);
-  },
 };
 
-
-/**
- * MessagesListManager
- *
- * This object keeps a list of IDBCursors to iterate over messages lists
- * and provides the functions to manage the insertion and deletion of this
- * cursors.
- */
-let MessageListManager = (function() {
-  // Private member containing the list of IDBCursors associated with each
-  // message list.
-  _cursors : {};
-
-  // Public methods for managing the message lists.
-  return {
-    /**
-     * Add a list to the manager.
-     *
-     * @param cursor
-     *        IDBCursor represents a cursor for traversing or iterating over
-     *        a database search.
-     *
-     * @return the id of the list.
-     */
-    add: function(cursor) {
-      // Generate the message list uuid.
-      // TODO: use mz uuid generator component.
-      let uuid = generateUUID();
-      // Insert the cursor and the message list id.
-      this._cursors[uuid] = cursor;
-      return uuid;
-    },
-
-    /**
-     * Get a cursor for traversing or iterating over a message list
-     *
-     * @param uuid
-     *        Number representing the id of the message list to retrieve
-     *
-     * @return IDBCursor for traversing or iterating over a database search
-     */
-    get: function(uuid) {
-      //TODO: check id as valid uuid. Not sure if mz has a function for that.
-      if (this._cursors[uuid]) {
-        return this._cursors[uuid];
-      }
-      debug("Trying to get an unknown list!");
-      return null;
-    },
-    
-   /**
-    * Remove a message list according to the passed id
-    *
-    * @param id
-    *        Number representing the id of the message list to remove
-    */
-    remove: function(uuid) {
-      delete this._cursors[uuid];
-    },
-
-   /**
-    * Remove all message lists in the manager
-    */
-    clear: function() {
-      this[_cursors] = {};
-    }
-  }
-})();
-
-
-/**
- * SmsDatabaseService
- */ 
-function SmsDatabaseService() {
-}
-SmsDatabaseService.prototype = {
-  /**
-   * nsIDOMGlobalPropertyInitializer implementation
-   */
-  init: function(aWindow) {
-    this.window = aWindow;
-    this.smsDB = new SmsDatabase(aWindow);
-  },
-  
-  /**
-   * Takes some information required to save the message and returns its id.
-   *
-   * @param aReceiver
-   *        DOMString containing the address of the reciever of the SMS.
-   * @param aBody 
-   *        DOMString containing the body of the SMS.
-   * @param aDate
-   *        Date of the SMS delivery.
-   *
-   * @returns stored message id.
-   */
-  saveSentMessage: function saveSentMessage(aReceiver, aBody, aDate,
-                                            //TODO: callbacks doesn´t appear in idl ...                                         
-                                            successCb, failureCb) { 
-    let properties = {
-      delivery: DELIVERY_SENT,
-      sender:   CURRENT_ADDRESS,
-      receiver: aReceiver,
-      body:     aBody,
-      date:     aDate
-    };
-    let sms = this.smsDB.makeSms({}, properties);
-    sms.save(function (record) {
-      console.log ("New sms id: " + record.id);
-      if (record.id) {
-        successCb(record.id);
-      };
-    }, failureCb);
-  },
-
-  /**
-   * Get a message from its id.
-   *
-   * @param messageId
-   *        UUID of the message retrieved.
-   * @param requestId
-   *        //TODO: tbd
-   * @param processId [optional]
-   *        //TODO: tbd
-   *
-   * //TODO: callbacks are not allowed in current idl
-   *         instead, it returns a nsIDOMMozSmsRequest
-   */
-  getMessage: function getMessage(messageId, 
-                                  requestId, 
-                                  processId,
-                                  successCb,
-                                  errorCb) {
-    let options = {filterBy: ["id"],
-                   filterOp: "equals",
-                   filterValue: messageId};
-    this.smsDB.find(successCb, errorCb, options);
-  }
-};
+//const NSGetFactory = XPCOMUtils.generateNSGetFactory([SmsDatabaseService]);
 
 /**
  * Generate a UUID according to RFC4122 v4 (random UUIDs)
@@ -587,15 +325,13 @@ function generateUUID() {
 };
 
 
+
 /**
  * Fake setup for HTML
  */
-
 let smsdb = window.navigator.mozSmsDatabase = new SmsDatabaseService();
 smsdb.init(window);
 
 function debug() {
-  let args = Array.slice(arguments);
-  args.unshift("DEBUG");
-  console.log.apply(console, args);
+  dump(Array.slice(arguments).join(" ") + "\n");
 }
