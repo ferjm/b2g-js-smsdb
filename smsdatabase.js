@@ -79,6 +79,16 @@ SmsDatabaseService.prototype = {
   db: null,
 
   /**
+   * DB request queue.
+   */
+  requestQueue: [],
+
+  /**
+   * TODO: just for testing purposes
+   */
+  cursor: null,
+
+  /**
    * Init method just for HTML testing
    */ 
   init: function init(aWindow) {
@@ -266,7 +276,7 @@ SmsDatabaseService.prototype = {
   },
 
   deleteMessage: function deleteMessage(messageId, requestId) {
-    this.newTxn(function (error, txn, store) {
+    this.newTxn(function (txn, store, error) {
       let request = store.delete(messageId);
       txn.oncomplete = function (event) {
         gSmsRequestManager.notifySmsDeleted(requestId, true);
@@ -277,6 +287,15 @@ SmsDatabaseService.prototype = {
         gSmsRequestManager.notifySmsDeleteFailed(requestId, eInternalError);
       };
     });
+  },
+
+  deleteMessageOWD: function deleteMessageOWD(messageId, successCb, failureCb) {
+    this.newTxn(IDBTransaction.READ_WRITE, function (txn, store, error) {
+        let request = store.delete(messageId);        
+      }, function (event) {
+        debug("deleteMessageOWD. Transaction complete");
+        successCb(event.target.result);
+      }, failureCb);
   },
 
 //The message list stuff could be elegantly implemented using IDB cursors,

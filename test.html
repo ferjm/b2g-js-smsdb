@@ -16,6 +16,14 @@ let sample_sms = {
   timestamp: "1326732447"
 };
 
+let sample_sms2 = {
+  delivery: "sent",
+  sender: "+34666222111",
+  receiver: "+34666555222",
+  body: "Hi there!",
+  timestamp: "1326732447"
+};
+
 function onSuccess(sms) {
   console.log("onSuccess", sms);
   next();
@@ -35,6 +43,7 @@ function assert(assertion, msg) {
 
 let index = 0;
 let messageId = 0;
+let messageId2 = 0;
 let steps = [
   function () {
     console.log("Deleting database");
@@ -54,15 +63,50 @@ let steps = [
       onSuccess(record);
     },onFailure);
   },
+  function () {    
+    console.log("Adding new sms with the SmsDatabaseService API", sample_sms2);
+    window.navigator.mozSmsDatabase.saveSentMessageOWD(sample_sms.receiver,
+                                                       sample_sms.body,
+                                                       sample_sms.timestamp,
+                                                       function (record){      
+      messageId2 = record.id;
+      onSuccess(record);
+    },onFailure);
+  },
   function () {
-    console.log("Getting sms with id: " + messageId);
-    window.navigator.mozSmsDatabase.getMessageOWD(messageId, function(message){
-      console.log("sms.sender = " + message[0].sender + 
-                  "\nsms.receiver = " + message[0].receiver +
-                  "\nsms.body = " + message[0].body);
+    console.log("Deleting sms with id: " + messageId);
+    window.navigator.mozSmsDatabase.deleteMessageOWD(messageId, function(result) {
       next();
     }, onFailure);
   },
+  function () {
+    console.log("Getting sms with id: " + messageId2);
+    window.navigator.mozSmsDatabase.getMessageOWD(messageId2, function(message){
+      if (message.length <= 0) {
+        console.log("Message with messageId: " + messageId2 + " not found!");
+        next();
+      } else {
+        console.log("sms.sender = " + message[0].sender + 
+                    "\nsms.receiver = " + message[0].receiver +
+                    "\nsms.body = " + message[0].body);
+        next();
+      }
+    }, onFailure);
+  },
+  function () {
+    console.log("Getting DELETED sms with id: " + messageId);
+    window.navigator.mozSmsDatabase.getMessageOWD(messageId, function(message){
+      if (message.length <= 0) {
+        console.log("Message with messageId: " + messageId + " not found!");
+        next();
+      } else {
+        console.log("sms.sender = " + message[0].sender + 
+                    "\nsms.receiver = " + message[0].receiver +
+                    "\nsms.body = " + message[0].body);
+         next();
+      }
+    }, onFailure);
+  }, 
   function () {
     console.log("Deleting database");
     window.mozIndexedDB.deleteDatabase("sms").onsuccess = onSuccess;
