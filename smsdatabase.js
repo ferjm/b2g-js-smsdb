@@ -377,10 +377,10 @@ SmsDatabaseService.prototype = {
     // cursor requests that matches each of the filter parameters.
     // TODO not sure if this is the best approach for storing the keys...
     //      An object make the insertion O(1), but the retrieval of keys
-    //      would be unsorted. An array has an extra cost of insertion as we
-    //      need to delete duplicate keys, but it has O(1) cost for key
-    //      obtention and it is sorted.
-    let filteredKeys = {};
+    //      would be unsorted. An array has an extra cost of post-insertion as
+    //      we need to delete duplicate keys, but it has O(1) cost for key
+    //      obtention and it is definitely sorted.
+    let filteredKeys = [];
     // We need to apply the searches according to all the parameters of the
     // filter. filterCount will decrease with each of this searches.
     let filterCount = 4;
@@ -421,7 +421,7 @@ SmsDatabaseService.prototype = {
         // The cursor primaryKey is stored in filteredKeys.
         let primaryKey = result.primaryKey;
         if (DEBUG) debug("Data: " + result.primaryKey);
-        filteredKeys[primaryKey] = undefined;
+        filteredKeys.push(primaryKey);
         result.continue();
       };
 
@@ -461,7 +461,7 @@ SmsDatabaseService.prototype = {
           // The cursor primaryKey is stored in filteredKeys.
           let primaryKey = result.primaryKey;
           if (DEBUG) debug("Data: " + result.primaryKey);
-          filteredKeys[primaryKey] = undefined;
+          filteredKeys.push(primaryKey);
           result.continue();
         };
 
@@ -473,9 +473,16 @@ SmsDatabaseService.prototype = {
         };
       }, function (event) {
         if (filterCount == 0) {
+          // We need to get rid off the duplicated keys.
+          let result = [];
+          for (let i = 0; i < filteredKeys.length; i++ ) {
+            if ( result.indexOf( filteredKeys[i], 0, filteredKeys ) < 0 ) { 
+              result.push(filteredKeys[i]); 
+            }
+          }
           // At this point, filteredKeys should have all the keys that matches
           // all the search filters. So it is added to the MessagesListManager,
-          // which assigns it and returns a message list identifier.
+          // which assigns it and returns a message list identifier.          
           let messageListId = MessagesListManager.add(filteredKeys);
           successCb(messageListId);
           return;
