@@ -371,8 +371,6 @@ SmsDatabaseService.prototype = {
 
   createMessageListOWD: function createMessageListOWD(filter, reverse, requestId,
                                                       successCb, failureCb) {
-    //TODO reverse (ordered by date)
-    
     // This object keeps a list of the keys that matches the search criteria
     // according to the nsIMozSmsFilter parameter.
     // Its final content will be the intersection of the results of all the
@@ -403,7 +401,13 @@ SmsDatabaseService.prototype = {
         return;
       }
       let timeKeyRange = IDBKeyRange.bound(filter.startDate, filter.endDate);
-      let timeRequest = store.index("timestamp").openKeyCursor(timeKeyRange);
+      let timeRequest;
+      if (reverse == true) {
+        timeRequest = store.index("timestamp").openKeyCursor(timeKeyRange,
+                                                             IDBCursor.PREV);
+      } else {
+        timeRequest = store.index("timestamp").openKeyCursor(timeKeyRange); 
+      }
 
       timeRequest.onsuccess = function (event) {
         let result = event.target.result;
