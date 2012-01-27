@@ -65,10 +65,10 @@ let gSmsService = (function() {
  * This object keeps a list of IDBKey arrays to iterate over messages lists
  * and provides the functions to manage the insertion and deletion of arrays
  */
-let MessageListManager = (function() {
+let MessagesListManager = (function() {
   // Private member containing the list of IDBCursors associated with each
   // message list.
-  _keys : Object.create(null);
+  let _keys = Object.create(null);
 
   // Public methods for managing the message lists.
   return {
@@ -76,16 +76,16 @@ let MessageListManager = (function() {
      * Add a list to the manager.
      *
      * @param keys[]
-     *        Array of IDBKeys
+     *        Object containing a list of IDBKeys as Object properties.
      *
      * @return the id of the list.
      */
-    add: function(cursor) {
+    add: function(keys) {
       // Generate the message list uuid.
       // TODO: use mz uuid generator component.
       let uuid = generateUUID();
       // Insert the keys associated with the message list id.
-      this._keys[uuid] = keys;
+      _keys[uuid] = keys;
       return uuid;
     },
 
@@ -99,8 +99,8 @@ let MessageListManager = (function() {
      */
     get: function(uuid) {
       //TODO: check id as valid uuid. Not sure if mz has a function for that.
-      if (this._keys[uuid]) {
-        return this._keys[uuid];
+      if (_keys[uuid]) {
+        return _keys[uuid];
       }
       debug("Trying to get an unknown list!");
       return null;
@@ -113,14 +113,14 @@ let MessageListManager = (function() {
     *        Number representing the id of the message list to remove
     */
     remove: function(uuid) {
-      delete this._keys[uuid];
+      delete _keys[uuid];
     },
 
    /**
     * Remove all message lists in the manager
     */
     clear: function() {
-      this[_keys] = {};
+      _keys = {};
     }
   }
 })();
@@ -130,7 +130,6 @@ let MessageListManager = (function() {
  * SmsDatabaseService
  */
 function SmsDatabaseService() {
-  this._messageLists = Object.create(null);
 }
 SmsDatabaseService.prototype = {
 
@@ -365,33 +364,6 @@ SmsDatabaseService.prototype = {
       }, failureCb);
   },
 
-  /**
-   * Helper functions for createMessageList
-   */
-  _retrieveKeys: function _retrieveKeys(store,
-                                        filteredKeys, 
-                                        filterCount, 
-                                        keyRange,
-                                        index,
-                                        successCb) {
-    let cursorRequest = store.index(index).openKeyCursor(keyRange);
-    cursorRequest.onsuccess = function (event) {
-      if (DEBUG) debug("Cursor successfully retrieved.");
-      let result = event.target.result;
-      if (!!result == false) {
-        filterCount--;
-        if (filterCount == 0) {           
-          successCb();
-        }
-        return;
-      }
-      let primaryKey = result.primaryKey;
-      if (DEBUG) debug("Data: " + result.primaryKey);
-      filteredKeys[primaryKey] = undefined;
-      result.continue();  
-    };
-  },
-   
 //The message list stuff could be elegantly implemented using IDB cursors,
 //except we'd need to keep the txn open, so maybe not such a good idea
 //(unless we find a way to queue other requests while a list is being
@@ -400,114 +372,77 @@ SmsDatabaseService.prototype = {
   createMessageListOWD: function createMessageListOWD(filter, reverse, requestId, 
                                                       successCb, failureCb) {
     //TODO reverse
-    //TODO can´t this be done within the same transaction??
-    //TODO make functions from common code
 
     // This object keeps a list of the keys that matches the search criteria 
     // according to the nsIMozSmsFilter parameter.
     // Its final content will be the intersection of the results of all the 
     // cursor requests that matches each of the filter parameters.
     // TODO not sure if this is the best approach for storing the keys...
+    //      I chose an object to make the insertion O(1).
     let filteredKeys = {};
-    // We need to apply the all the searches according to all the parameters
-    // of the filter. This variable will be decrease with each of this 
-    // searches.
-    let filterCount = 3;
+    // We need to apply the searches according to all the parameters of the 
+    // filter. filterCount will decrease with each of this searches.
+    let filterCount = 4;
 
-    let self = this;
-    self.newTxn(IDBTransaction.READ_ONLY, function (txn, store, error) {
-      if (error) {
+    // All the searches will happen within the same transaction
+    this.newTxn(IDBTransaction.READ_ONLY, function (txn, store, error) {
+      if (error) {        
         failureCb("Transaction error.");
         return;
       }
-      // Retrieve the keys from the 'delivery' index that matches the values
-      // of filter.delivery
-      let keyRange = IDBKeyRange.only(filter.delivery);
-      /*self._retrieveKeys(store,
-                         filteredKeys, 
-                         filterCount, 
-                         keyRange, 
-                         "delivery", 
-                         successCb);
-      */
-      let cursorRequest = store.index("delivery").openKeyCursor(keyRange);
-      cursorRequest.onsuccess = function (event) {
-        if (DEBUG) debug("Cursor successfully retrieved.");
+      // Retrieve the keys from the 'delivery' index that matches the value of
+      // filter.delivery.
+      let deliveryKeyRange = IDBKeyRange.only(filter.delivery);
+      let deliveryRequest = store.index("delivery").openKeyCursor(deliveryKeyRange);
+      
+      // Retrieve the keys from the 'timestamp' index that matches the values
+      // of filter.startDate and filter.endDate.
+      let timeKeyRange = IDBKeyRange.bound(filter.startDate, filter.endDate);
+      let timeRequest = store.index("timestamp").openKeyCursor(timeKeyRange);
+
+      // Retrieve the keys from the 'sender' and 'receiver' indexes that match 
+      // the values of filter.numbers
+      let numberKeyRange = IDBKeyRange.bound(filter.numbers[0],
+                                             filter.numbers[filter.numbers.length-1]);
+      let senderRequest = store.index("sender").openKeyCursor(numberKeyRange);
+      let receiverRequest = store.index("receiver").openKeyCursor(numberKeyRange);
+
+      deliveryRequest.onsuccess = 
+      timeRequest.onsuccess = 
+      senderRequest.onsuccess = 
+      receiverRequest.onsuccess = function (event) {
         let result = event.target.result;
-        if (!!result == false) {
+        debug("filterCount: " + filterCount);
+        // Once the cursor has retrieved all keys that matches its key range,
+        // the filter search is done and filterCount is decreased.
+        if (!!result == false) {          
           filterCount--;
-          if (filterCount == 0) {           
-            successCb();
-          }
           return;
         }
+        // The cursor primaryKey is stored in filteredKeys.
         let primaryKey = result.primaryKey;
         if (DEBUG) debug("Data: " + result.primaryKey);
         filteredKeys[primaryKey] = undefined;
         result.continue();
       };
-      cursorRequest.onerror = function (event) {
+
+      deliveryRequest.onerror = 
+      timeRequest.onerror =
+      senderRequest.onerror = 
+      receiverRequest.onerror = function (event) {
         if (DEBUG) debug("Error retrieving cursor.");
         failureCb();
       };
-    }, function (event) {
-      self.newTxn(IDBTransaction.READ_ONLY, function (txn, store, error) {
-        if (error) {
-          failureCb("Transaction error.");
-          return;
-        }
-        // When the previous txn ends we start a new one to retrieve the keys
-        // according to filter.timestamp from the timestamp index.
-        // TODO can I use the same keyRange variable ??
-        let keyRange = IDBKeyRange.bound(filter.startDate, filter.endDate);
-        let cursorRequest = store.index("timestamp").openKeyCursor(keyRange);
-        cursorRequest.onsuccess = function (event) {
-          if (DEBUG) debug("Timestamp cursor successfully retrieved.");
-          let result = event.target.result;
-          if (!!result == false) {
-            filterCount--;
-            if (filterCount == 0) {
-              successCb();
-            }
-            return;
-          }
-          let primaryKey = result.primaryKey;
-          if (DEBUG) debug("Data: " + result.primaryKey);
-          filteredKeys[primaryKey] = undefined;
-          result.continue();
-        };
-        cursorRequest.onerror = function (event) {
-          if (DEBUG) debug("Error retrieving the timestamp cursor.");
-          failureCb();
-        };
-      }, function (event) {
-        self.newTxn(IDBTransaction.READ_ONLY, function (txn, store, error) {
-          if (error) {
-            failureCb("Transaction error.");
-            return;
-          }
-          let keyRange = IDBKeyRange.bound(filter.numbers[0], 
-                                           filter.numbers[filter.numbers.length-1]);
-          let cursorRequest = store.index("sender").openKeyCursor(keyRange);
-          cursorRequest.onsuccess = function (event) {
-            if (DEBUG) debug("Numbers cursor successfully retrieved.");
-            let result = event.target.result;
-            if (!!result == false) {
-              filterCount--;
-              if (filterCount == 0) {
-                successCb();
-              }
-              return;
-            }            
-            let primaryKey = result.primaryKey;
-            if (DEBUG) debug("Data: " + result.primaryKey);
-            filteredKeys[primaryKey] = undefined;
-            result.continue();
-          }
-        }, function (event) {
-        }, failureCb);
-      }, failureCb);
-    }, failureCb);
+   }, function (event) {    
+     if (filterCount == 0) {
+       // At this point, filteredKeys should have all the keys that matches
+       // all the search filters. So it is added to the MessagesListManager,
+       // which assigns it and returns a message list identifier.
+       messageListId = MessagesListManager.add(filteredKeys);
+       successCb(messageListId);       
+     }
+     failureCb();
+   }, failureCb);
   },
 
   getNextMessageInList: function getNextMessageInList(listId, requestId, processId) {

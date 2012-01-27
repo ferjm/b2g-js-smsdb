@@ -81,7 +81,7 @@ let steps = [
       endDate: "1326732450",
       numbers: ["+34666222111","+34666222111"]
     };
-    window.navigator.mozSmsDatabase.createMessageListOWD(filter, null, null, function () {
+    window.navigator.mozSmsDatabase.createMessageListOWD(filter, null, null, function (e) {      
       next();
     }, onFailure);
   },
