@@ -21,7 +21,7 @@ let sample_sms2 = {
   sender: "+34666222111",
   receiver: "+34666555222",
   body: "Hi there!",
-  timestamp: "1326732447"
+  timestamp: "1326732450"
 };
 
 function onSuccess(sms) {
@@ -72,6 +72,18 @@ let steps = [
       messageId2 = record.id;
       onSuccess(record);
     },onFailure);
+  },
+  function () {
+    console.log("createMessageList");
+    let filter = {
+      delivery: "sent",
+      startDate: "1326732447",
+      endDate: "1326732450",
+      numbers: ["+34666222111","+34666222111"]
+    };
+    window.navigator.mozSmsDatabase.createMessageListOWD(filter, null, null, function () {
+      next();
+    }, onFailure);
   },
   function () {
     console.log("Deleting sms with id: " + messageId);

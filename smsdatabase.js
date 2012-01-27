@@ -60,6 +60,73 @@ let gSmsService = (function() {
 })();
 
 /**
+ * MessagesListManager
+ *
+ * This object keeps a list of IDBKey arrays to iterate over messages lists
+ * and provides the functions to manage the insertion and deletion of arrays
+ */
+let MessageListManager = (function() {
+  // Private member containing the list of IDBCursors associated with each
+  // message list.
+  _keys : Object.create(null);
+
+  // Public methods for managing the message lists.
+  return {
+    /**
+     * Add a list to the manager.
+     *
+     * @param keys[]
+     *        Array of IDBKeys
+     *
+     * @return the id of the list.
+     */
+    add: function(cursor) {
+      // Generate the message list uuid.
+      // TODO: use mz uuid generator component.
+      let uuid = generateUUID();
+      // Insert the keys associated with the message list id.
+      this._keys[uuid] = keys;
+      return uuid;
+    },
+
+    /**
+     * Get an array of keys for traversing or iterating over a message list
+     *
+     * @param uuid
+     *        Number representing the id of the message list to retrieve
+     *
+     * @return Array of keys
+     */
+    get: function(uuid) {
+      //TODO: check id as valid uuid. Not sure if mz has a function for that.
+      if (this._keys[uuid]) {
+        return this._keys[uuid];
+      }
+      debug("Trying to get an unknown list!");
+      return null;
+    },
+    
+   /**
+    * Remove a message list according to the passed id
+    *
+    * @param id
+    *        Number representing the id of the message list to remove
+    */
+    remove: function(uuid) {
+      delete this._keys[uuid];
+    },
+
+   /**
+    * Remove all message lists in the manager
+    */
+    clear: function() {
+      this[_keys] = {};
+    }
+  }
+})();
+
+
+/**
  * SmsDatabaseService
  */
 function SmsDatabaseService() {
@@ -226,7 +293,7 @@ SmsDatabaseService.prototype = {
           txn.result = record;
         };
       }, function (event) {
-        debug("saveSentMessageOWD. result: " + event.target.result);
+        if (DEBUG) debug("saveSentMessageOWD. result: " + event.target.result);
         successCb(event.target.result);
       }, failureCb);
   },
@@ -265,12 +332,12 @@ SmsDatabaseService.prototype = {
     this.newTxn(IDBTransaction.READ_ONLY, function (txn, store, error) {
         let request = store.getAll(messageId);
         request.onsuccess = function (event) {
-          debug("Request successfull. Record count: ", 
+          if (DEBUG) debug("Request successfull. Record count: ", 
                 event.target.result.length);
           txn.result = event.target.result;
         };
       }, function (event) {
-        debug("getMessageOWD. Transaction complete");
+        if (DEBUG) debug("getMessageOWD. Transaction complete");
         successCb(event.target.result);
       }, failureCb);
   },
@@ -293,18 +360,154 @@ SmsDatabaseService.prototype = {
     this.newTxn(IDBTransaction.READ_WRITE, function (txn, store, error) {
         let request = store.delete(messageId);        
       }, function (event) {
-        debug("deleteMessageOWD. Transaction complete");
+        if (DEBUG) debug("deleteMessageOWD. Transaction complete");
         successCb(event.target.result);
       }, failureCb);
   },
 
+  /**
+   * Helper functions for createMessageList
+   */
+  _retrieveKeys: function _retrieveKeys(store,
+                                        filteredKeys, 
+                                        filterCount, 
+                                        keyRange,
+                                        index,
+                                        successCb) {
+    let cursorRequest = store.index(index).openKeyCursor(keyRange);
+    cursorRequest.onsuccess = function (event) {
+      if (DEBUG) debug("Cursor successfully retrieved.");
+      let result = event.target.result;
+      if (!!result == false) {
+        filterCount--;
+        if (filterCount == 0) {           
+          successCb();
+        }
+        return;
+      }
+      let primaryKey = result.primaryKey;
+      if (DEBUG) debug("Data: " + result.primaryKey);
+      filteredKeys[primaryKey] = undefined;
+      result.continue();  
+    };
+  },
+   
 //The message list stuff could be elegantly implemented using IDB cursors,
 //except we'd need to keep the txn open, so maybe not such a good idea
 //(unless we find a way to queue other requests while a list is being
 //processed, but that sounds messy).
 
-  createMessageList: function createMessageList(filter, reverse, requestId) {
-    //TODO
+  createMessageListOWD: function createMessageListOWD(filter, reverse, requestId, 
+                                                      successCb, failureCb) {
+    //TODO reverse
+    //TODO can´t this be done within the same transaction??
+    //TODO make functions from common code
+
+    // This object keeps a list of the keys that matches the search criteria 
+    // according to the nsIMozSmsFilter parameter.
+    // Its final content will be the intersection of the results of all the 
+    // cursor requests that matches each of the filter parameters.
+    // TODO not sure if this is the best approach for storing the keys...
+    let filteredKeys = {};
+    // We need to apply the all the searches according to all the parameters
+    // of the filter. This variable will be decrease with each of this 
+    // searches.
+    let filterCount = 3;
+
+    let self = this;
+    self.newTxn(IDBTransaction.READ_ONLY, function (txn, store, error) {
+      if (error) {
+        failureCb("Transaction error.");
+        return;
+      }
+      // Retrieve the keys from the 'delivery' index that matches the values
+      // of filter.delivery
+      let keyRange = IDBKeyRange.only(filter.delivery);
+      /*self._retrieveKeys(store,
+                         filteredKeys, 
+                         filterCount, 
+                         keyRange, 
+                         "delivery", 
+                         successCb);
+      */
+      let cursorRequest = store.index("delivery").openKeyCursor(keyRange);
+      cursorRequest.onsuccess = function (event) {
+        if (DEBUG) debug("Cursor successfully retrieved.");
+        let result = event.target.result;
+        if (!!result == false) {
+          filterCount--;
+          if (filterCount == 0) {           
+            successCb();
+          }
+          return;
+        }
+        let primaryKey = result.primaryKey;
+        if (DEBUG) debug("Data: " + result.primaryKey);
+        filteredKeys[primaryKey] = undefined;
+        result.continue();
+      };
+      cursorRequest.onerror = function (event) {
+        if (DEBUG) debug("Error retrieving cursor.");
+        failureCb();
+      };
+    }, function (event) {
+      self.newTxn(IDBTransaction.READ_ONLY, function (txn, store, error) {
+        if (error) {
+          failureCb("Transaction error.");
+          return;
+        }
+        // When the previous txn ends we start a new one to retrieve the keys
+        // according to filter.timestamp from the timestamp index.
+        // TODO can I use the same keyRange variable ??
+        let keyRange = IDBKeyRange.bound(filter.startDate, filter.endDate);
+        let cursorRequest = store.index("timestamp").openKeyCursor(keyRange);
+        cursorRequest.onsuccess = function (event) {
+          if (DEBUG) debug("Timestamp cursor successfully retrieved.");
+          let result = event.target.result;
+          if (!!result == false) {
+            filterCount--;
+            if (filterCount == 0) {
+              successCb();
+            }
+            return;
+          }
+          let primaryKey = result.primaryKey;
+          if (DEBUG) debug("Data: " + result.primaryKey);
+          filteredKeys[primaryKey] = undefined;
+          result.continue();
+        };
+        cursorRequest.onerror = function (event) {
+          if (DEBUG) debug("Error retrieving the timestamp cursor.");
+          failureCb();
+        };
+      }, function (event) {
+        self.newTxn(IDBTransaction.READ_ONLY, function (txn, store, error) {
+          if (error) {
+            failureCb("Transaction error.");
+            return;
+          }
+          let keyRange = IDBKeyRange.bound(filter.numbers[0], 
+                                           filter.numbers[filter.numbers.length-1]);
+          let cursorRequest = store.index("sender").openKeyCursor(keyRange);
+          cursorRequest.onsuccess = function (event) {
+            if (DEBUG) debug("Numbers cursor successfully retrieved.");
+            let result = event.target.result;
+            if (!!result == false) {
+              filterCount--;
+              if (filterCount == 0) {
+                successCb();
+              }
+              return;
+            }            
+            let primaryKey = result.primaryKey;
+            if (DEBUG) debug("Data: " + result.primaryKey);
+            filteredKeys[primaryKey] = undefined;
+            result.continue();
+          }
+        }, function (event) {
+        }, failureCb);
+      }, failureCb);
+    }, failureCb);
   },
 
   getNextMessageInList: function getNextMessageInList(listId, requestId, processId) {
@@ -351,6 +554,12 @@ function generateUUID() {
 let smsdb = window.navigator.mozSmsDatabase = new SmsDatabaseService();
 smsdb.init(window);
 
-function debug() {
+/*function debug() {
   dump(Array.slice(arguments).join(" ") + "\n");
+}*/
+
+function debug() {
+  let args = Array.slice(arguments);
+  args.unshift("DEBUG");
+  console.log.apply(console, args);
 }
