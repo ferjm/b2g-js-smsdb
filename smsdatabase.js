@@ -27,7 +27,7 @@ const DELIVERY_RECEIVED = "received";
 const DELIVERY_SENT = "sent";
 
 // TODO: own number must be retrieved from the RIL
-const CURRENT_ADDRESS = "+34666222111"; 
+const CURRENT_ADDRESS = "+34666222111";
 
 /*XPCOMUtils.defineLazyServiceGetter(this, "gSmsService",
                                    "@mozilla.org/sms/smsservice;1",
@@ -105,7 +105,7 @@ let MessagesListManager = (function() {
       debug("Trying to get an unknown list!");
       return null;
     },
-    
+
    /**
     * Remove a message list according to the passed id
     *
@@ -156,7 +156,7 @@ SmsDatabaseService.prototype = {
 
   /**
    * Init method just for HTML testing
-   */ 
+   */
   init: function init(aWindow) {
     this.window = aWindow;
   },
@@ -184,7 +184,7 @@ SmsDatabaseService.prototype = {
       self.db = db;
       callback(null, db);
     }
-    
+
     let indexedDB = this.window.mozIndexedDB;
     let request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onsuccess = function (event) {
@@ -275,7 +275,7 @@ SmsDatabaseService.prototype = {
     return id;
   },
 
-  saveSentMessageOWD: function saveSentMessage(receiver, body, date, 
+  saveSentMessageOWD: function saveSentMessage(receiver, body, date,
                                                successCb, failureCb) {
     let record = gSmsService.createSmsMessage(generateUUID(),
                                               DELIVERY_SENT,
@@ -287,7 +287,7 @@ SmsDatabaseService.prototype = {
         if (error) {
           failureCb("Transaction error");
         }
-        let request = store.put(record);        
+        let request = store.put(record);
         request.onsuccess = function (event) {
           txn.result = record;
         };
@@ -331,7 +331,7 @@ SmsDatabaseService.prototype = {
     this.newTxn(IDBTransaction.READ_ONLY, function (txn, store, error) {
         let request = store.getAll(messageId);
         request.onsuccess = function (event) {
-          if (DEBUG) debug("Request successfull. Record count: ", 
+          if (DEBUG) debug("Request successfull. Record count: ",
                 event.target.result.length);
           txn.result = event.target.result;
         };
@@ -357,7 +357,7 @@ SmsDatabaseService.prototype = {
 
   deleteMessageOWD: function deleteMessageOWD(messageId, successCb, failureCb) {
     this.newTxn(IDBTransaction.READ_WRITE, function (txn, store, error) {
-        let request = store.delete(messageId);        
+        let request = store.delete(messageId);
       }, function (event) {
         if (DEBUG) debug("deleteMessageOWD. Transaction complete");
         successCb(event.target.result);
@@ -369,53 +369,48 @@ SmsDatabaseService.prototype = {
 //(unless we find a way to queue other requests while a list is being
 //processed, but that sounds messy).
 
-  createMessageListOWD: function createMessageListOWD(filter, reverse, requestId, 
+  createMessageListOWD: function createMessageListOWD(filter, reverse, requestId,
                                                       successCb, failureCb) {
-    //TODO reverse
-
-    // This object keeps a list of the keys that matches the search criteria 
+    //TODO reverse (ordered by date)
+    
+    // This object keeps a list of the keys that matches the search criteria
     // according to the nsIMozSmsFilter parameter.
-    // Its final content will be the intersection of the results of all the 
+    // Its final content will be the intersection of the results of all the
     // cursor requests that matches each of the filter parameters.
     // TODO not sure if this is the best approach for storing the keys...
-    //      I chose an object to make the insertion O(1).
+    //      An object make the insertion O(1), but the retrieval of keys
+    //      would be unsorted. An array has an extra cost of insertion as we
+    //      need to delete duplicate keys, but it has O(1) cost for key
+    //      obtention and it is sorted.
     let filteredKeys = {};
-    // We need to apply the searches according to all the parameters of the 
+    // We need to apply the searches according to all the parameters of the
     // filter. filterCount will decrease with each of this searches.
     let filterCount = 4;
 
-    // All the searches will happen within the same transaction
-    this.newTxn(IDBTransaction.READ_ONLY, function (txn, store, error) {
-      if (error) {        
+    // As we need to get the list of keys that match the filter criteria
+    // sorted by timestamp index, we will split the key obtention in two
+    // different transactions. One for the timestamp index and another one
+    // for the rest of indexes to query.
+    let self = this;
+    this.newTxn(IDBTransaction.READ_ONLY,function (txn, store, error) {
+      if (error) {
         failureCb("Transaction error.");
         return;
       }
-      // Retrieve the keys from the 'delivery' index that matches the value of
-      // filter.delivery.
-      let deliveryKeyRange = IDBKeyRange.only(filter.delivery);
-      let deliveryRequest = store.index("delivery").openKeyCursor(deliveryKeyRange);
-      
-      // Retrieve the keys from the 'timestamp' index that matches the values
-      // of filter.startDate and filter.endDate.
+      // In first place, we retrieve the keys that match the filter.startDate
+      // and filter.endDate search criteria.
+      if (!filter.startDate && !filter.endDate) {
+        return;
+      }
       let timeKeyRange = IDBKeyRange.bound(filter.startDate, filter.endDate);
       let timeRequest = store.index("timestamp").openKeyCursor(timeKeyRange);
 
-      // Retrieve the keys from the 'sender' and 'receiver' indexes that match 
-      // the values of filter.numbers
-      let numberKeyRange = IDBKeyRange.bound(filter.numbers[0],
-                                             filter.numbers[filter.numbers.length-1]);
-      let senderRequest = store.index("sender").openKeyCursor(numberKeyRange);
-      let receiverRequest = store.index("receiver").openKeyCursor(numberKeyRange);
-
-      deliveryRequest.onsuccess = 
-      timeRequest.onsuccess = 
-      senderRequest.onsuccess = 
-      receiverRequest.onsuccess = function (event) {
+      timeRequest.onsuccess = function (event) {
         let result = event.target.result;
-        debug("filterCount: " + filterCount);
         // Once the cursor has retrieved all keys that matches its key range,
         // the filter search is done and filterCount is decreased.
-        if (!!result == false) {          
+        if (!!result == false) {
+          debug("timeRequest filterCount: " + filterCount);
           filterCount--;
           return;
         }
@@ -426,27 +421,70 @@ SmsDatabaseService.prototype = {
         result.continue();
       };
 
-      deliveryRequest.onerror = 
-      timeRequest.onerror =
-      senderRequest.onerror = 
-      receiverRequest.onerror = function (event) {
-        if (DEBUG) debug("Error retrieving cursor.");
-        failureCb();
+      timeRequest.onerror = function (event) {
+
       };
-   }, function (event) {    
-     if (filterCount == 0) {
-       // At this point, filteredKeys should have all the keys that matches
-       // all the search filters. So it is added to the MessagesListManager,
-       // which assigns it and returns a message list identifier.
-       messageListId = MessagesListManager.add(filteredKeys);
-       successCb(messageListId);       
-     }
-     failureCb();
-   }, failureCb);
+    }, function (event) {
+      // The rest of searches will happen within the same transaction
+      self.newTxn(IDBTransaction.READ_ONLY, function (txn, store, error) {
+        if (error) {
+          failureCb("Transaction error.");
+          return;
+        }
+        // Retrieve the keys from the 'delivery' index that matches the value of
+        // filter.delivery.
+        let deliveryKeyRange = IDBKeyRange.only(filter.delivery);
+        let deliveryRequest = store.index("delivery").openKeyCursor(deliveryKeyRange);
+
+        // Retrieve the keys from the 'sender' and 'receiver' indexes that match
+        // the values of filter.numbers
+        let numberKeyRange = IDBKeyRange.bound(filter.numbers[0],
+                                               filter.numbers[filter.numbers.length-1]);
+        let senderRequest = store.index("sender").openKeyCursor(numberKeyRange);
+        let receiverRequest = store.index("receiver").openKeyCursor(numberKeyRange);
+
+        deliveryRequest.onsuccess =
+        senderRequest.onsuccess =
+        receiverRequest.onsuccess = function (event) {
+          let result = event.target.result;
+          // Once the cursor has retrieved all keys that matches its key range,
+          // the filter search is done and filterCount is decreased.
+          if (!!result == false) {
+            debug("filterCount: " + filterCount);
+            filterCount--;
+            return;
+          }
+          // The cursor primaryKey is stored in filteredKeys.
+          let primaryKey = result.primaryKey;
+          if (DEBUG) debug("Data: " + result.primaryKey);
+          filteredKeys[primaryKey] = undefined;
+          result.continue();
+        };
+
+        deliveryRequest.onerror =
+        senderRequest.onerror =
+        receiverRequest.onerror = function (event) {
+          if (DEBUG) debug("Error retrieving cursor.");
+          failureCb();
+        };
+      }, function (event) {
+        if (filterCount == 0) {
+          // At this point, filteredKeys should have all the keys that matches
+          // all the search filters. So it is added to the MessagesListManager,
+          // which assigns it and returns a message list identifier.
+          let messageListId = MessagesListManager.add(filteredKeys);
+          successCb(messageListId);
+          return;
+        }
+        failureCb();
+      }, failureCb);
+    }, failureCb);
   },
 
-  getNextMessageInList: function getNextMessageInList(listId, requestId, processId) {
-    //TODO
+  getNextMessageInListOWD: function getNextMessageInListOWD(listId,
+                                                            requestId,
+                                                            processId) {
+      
   },
 
   clearMessageList: function clearMessageList(listId) {
