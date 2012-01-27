@@ -270,6 +270,7 @@ SmsDatabaseService.prototype = {
   // nsISmsDatabaseService
 
   //TODO this method should not be synchronous (bug 720653)
+  // Final implementation for Mozilla.
   saveSentMessage: function saveSentMessage(receiver, body, date) {
     let id = XXX;
     return id;
@@ -298,7 +299,7 @@ SmsDatabaseService.prototype = {
   },
 
   //TODO need to save incoming SMS, too!
-
+  //Final Implementation for Mozilla
   getMessage: function getMessage(messageId, requestId) {
     this.newTxn(IDBTransaction.READ_ONLY, function (error, txn, store) {
       let request = store.getAll(messageId);
@@ -341,6 +342,7 @@ SmsDatabaseService.prototype = {
       }, failureCb);
   },
 
+  // Final implementation for Mozilla
   deleteMessage: function deleteMessage(messageId, requestId) {
     this.newTxn(function (txn, store, error) {
       let request = store.delete(messageId);
@@ -447,6 +449,7 @@ SmsDatabaseService.prototype = {
         let senderRequest = store.index("sender").openKeyCursor(numberKeyRange);
         let receiverRequest = store.index("receiver").openKeyCursor(numberKeyRange);
 
+        //TODO what´s the code style for this?
         deliveryRequest.onsuccess =
         senderRequest.onsuccess =
         receiverRequest.onsuccess = function (event) {
@@ -465,6 +468,7 @@ SmsDatabaseService.prototype = {
           result.continue();
         };
 
+        //TODO what´s the code style for this?
         deliveryRequest.onerror =
         senderRequest.onerror =
         receiverRequest.onerror = function (event) {
@@ -473,6 +477,165 @@ SmsDatabaseService.prototype = {
         };
       }, function (event) {
         if (filterCount == 0) {
+          if (filteredKeys.length == 0) {
+            failureCb();
+            return;
+          }
+          // We need to get rid off the duplicated keys.          
+          let result = [];
+          for (let i = 0; i < filteredKeys.length; i++ ) {
+            if ( result.indexOf( filteredKeys[i], 0, filteredKeys ) < 0 ) { 
+              result.push(filteredKeys[i]); 
+            }
+          }
+          // At this point, filteredKeys should have all the keys that matches
+          // all the search filters. So we take the first key in another txn
+          // and retrieve the corresponding message. The rest of the keys are 
+          // added to the MessagesListManager, which assigns it a message list
+          // identifier.
+          let message;
+          self.newTxn(IDBTransaction.READ_ONLY, function (txn, store, error) {
+            //TODO Do we want to keep the list of keys?
+            let messageId = result.shift();
+            let request = store.get(messageId);
+            request.onsuccess = function (event) {
+              if (DEBUG) debug("Message successfully retrieved");
+              txn.result = event.target.result;
+            };
+            request.onerror = function (event) {
+              failureCb();
+            };
+          }, function (event) {            
+            let messageListId = MessagesListManager.add(filteredKeys);
+            let message = event.target.result;
+            successCb(messageListId, message);
+            return;
+          }, failureCb);
+        }
+        failureCb();
+      }, failureCb);
+    }, failureCb);
+  },
+
+  // Final implementation for Mozilla
+  createMessageList: function createMessageList(filter, 
+                                                reverse, 
+                                                requestId, 
+                                                processId) {
+    // This object keeps a list of the keys that matches the search criteria
+    // according to the nsIMozSmsFilter parameter.
+    // Its final content will be the intersection of the results of all the
+    // cursor requests that matches each of the filter parameters.
+    // TODO not sure if this is the best approach for storing the keys...
+    //      An object make the insertion O(1), but the retrieval of keys
+    //      would be unsorted. An array has an extra cost of post-insertion as
+    //      we need to delete duplicate keys, but it has O(1) cost for key
+    //      obtention and it is definitely sorted.
+    let filteredKeys = [];
+    // We need to apply the searches according to all the parameters of the
+    // filter. filterCount will decrease with each of this searches.
+    let filterCount = 4;
+
+    // As we need to get the list of keys that match the filter criteria
+    // sorted by timestamp index, we will split the key obtention in two
+    // different transactions. One for the timestamp index and another one
+    // for the rest of indexes to query.
+    let self = this;
+    this.newTxn(IDBTransaction.READ_ONLY,function (txn, store, error) {
+      if (error) {
+        gSmsRequestManager.notifyReadingMessageListFailed(eInternalError,
+                                                          requestId, 
+                                                          processId);
+        return;
+      }
+      // In first place, we retrieve the keys that match the filter.startDate
+      // and filter.endDate search criteria.
+      if (!filter.startDate && !filter.endDate) {
+        return;
+      }
+      let timeKeyRange = IDBKeyRange.bound(filter.startDate, filter.endDate);
+      let timeRequest;
+      if (reverse == true) {
+        timeRequest = store.index("timestamp").openKeyCursor(timeKeyRange,
+                                                             IDBCursor.PREV);
+      } else {
+        timeRequest = store.index("timestamp").openKeyCursor(timeKeyRange); 
+      }
+
+      timeRequest.onsuccess = function (event) {
+        let result = event.target.result;
+        // Once the cursor has retrieved all keys that matches its key range,
+        // the filter search is done and filterCount is decreased.
+        if (!!result == false) {
+          filterCount--;
+          return;
+        }
+        // The cursor primaryKey is stored in filteredKeys.
+        let primaryKey = result.primaryKey;
+        filteredKeys.push(primaryKey);
+        result.continue();
+      };
+
+      timeRequest.onerror = function (event) {
+        //TODO look at event.target.errorCode, pick appopriate error constant.
+        gSmsRequestManager.notifyReadingMessageListFailed(eInternalError,
+                                                          requestId,
+                                                          processId);
+        return;
+      };
+    }, function (event) {
+      // The rest of searches will happen within the same transaction
+      self.newTxn(IDBTransaction.READ_ONLY, function (txn, store, error) {
+        if (error) {
+          gSmsRequestManager.notifyReadingMessageListFailed(eInternalError,
+                                                            requestId, 
+                                                            processId);
+          return;
+        }
+        // Retrieve the keys from the 'delivery' index that matches the value of
+        // filter.delivery.
+        let deliveryKeyRange = IDBKeyRange.only(filter.delivery);
+        let deliveryRequest = store.index("delivery").openKeyCursor(deliveryKeyRange);
+
+        // Retrieve the keys from the 'sender' and 'receiver' indexes that match
+        // the values of filter.numbers
+        let numberKeyRange = IDBKeyRange.bound(filter.numbers[0],
+                                               filter.numbers[filter.numbers.length-1]);
+        let senderRequest = store.index("sender").openKeyCursor(numberKeyRange);
+        let receiverRequest = store.index("receiver").openKeyCursor(numberKeyRange);
+
+        //TODO what´s the code style for this?
+        deliveryRequest.onsuccess =
+        senderRequest.onsuccess =
+        receiverRequest.onsuccess = function (event) {
+          let result = event.target.result;
+          // Once the cursor has retrieved all keys that matches its key range,
+          // the filter search is done and filterCount is decreased.
+          if (!!result == false) {
+            filterCount--;
+            return;
+          }
+          // The cursor primaryKey is stored in filteredKeys.
+          let primaryKey = result.primaryKey;
+          filteredKeys.push(primaryKey);
+          result.continue();
+        };
+        
+        //TODO what´s the code style for this?
+        deliveryRequest.onerror =
+        senderRequest.onerror =
+        receiverRequest.onerror = function (event) {
+          gSmsRequestManager.notifyReadingMessageListFailed(eInternalError,
+                                                            requestId, 
+                                                            processId);
+          return;
+        };
+      }, function (event) {
+        if (filterCount == 0) {
+          if (filteredKeys == 0) {
+            gSmsRequestManager.notifyNoMessageInList(requestId, processId);
+            return;
+          }
           // We need to get rid off the duplicated keys.
           let result = [];
           for (let i = 0; i < filteredKeys.length; i++ ) {
@@ -481,21 +644,53 @@ SmsDatabaseService.prototype = {
             }
           }
           // At this point, filteredKeys should have all the keys that matches
-          // all the search filters. So it is added to the MessagesListManager,
-          // which assigns it and returns a message list identifier.          
-          let messageListId = MessagesListManager.add(filteredKeys);
-          successCb(messageListId);
-          return;
+          // all the search filters. So we take the first key and retrieve the 
+          // corresponding message. The rest of the keys are added to the
+          // MessagesListManager, which assigns it and returns a message list 
+          // identifier.
+          self.newTxn(IDBTransaction.READ_ONLY, function (txn, store, error) {
+            //TODO Do we want to keep the list of keys?            
+            let messageId = result.shift();
+            let request = store.get(messageId);
+            request.onsuccess = function (event) {
+              txn.result = event.target.result;
+            };
+            request.onerror = function (event) {
+              gSmsRequestManager.notifyReadingMessageListFailed(eInternalError,
+                                                                requestId,
+                                                                processId);
+              return;
+            };
+          }, function (event) {
+            let message = event.target.result;
+            let messageListId = MessagesListManager.add(filteredKeys);
+            gSmsRequestManager.notifyListCreated(messageListId,
+                                                 message.id,
+                                                 message.receiver,
+                                                 message.sender,
+                                                 message.body,
+                                                 message.timestamp,
+                                                 requestId,
+                                                 processId);
+          }, function (event) {
+            gSmsRequestManager.notifyReadingMessageListFailed(eInternalError,
+                                                              requestId,
+                                                              processId);
+            return;
+          }
         }
-        failureCb();
+        gSmsRequestManager.notifyReadingMessageListFailed(eInternalError,
+                                                          requestId,
+                                                          processId);
       }, failureCb);
     }, failureCb);
   },
 
+
   getNextMessageInListOWD: function getNextMessageInListOWD(listId,
                                                             requestId,
                                                             processId) {
-      
+    //TODO    
   },
 
   clearMessageList: function clearMessageList(listId) {
