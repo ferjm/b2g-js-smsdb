@@ -145,16 +145,6 @@ SmsDatabaseService.prototype = {
   db: null,
 
   /**
-   * DB request queue.
-   */
-  requestQueue: [],
-
-  /**
-   * TODO: just for testing purposes
-   */
-  cursor: null,
-
-  /**
    * Init method just for HTML testing
    */
   init: function init(aWindow) {
@@ -387,6 +377,28 @@ SmsDatabaseService.prototype = {
     // filter. filterCount will decrease with each of this searches.
     let filterCount = 4;
 
+    let onsuccess = function (event) {
+      let result = event.target.result;
+      // Once the cursor has retrieved all keys that matches its key range,
+      // the filter search is done and filterCount is decreased.
+      if (!!result == false) {
+        debug("filterCount: " + filterCount);
+        filterCount--;
+        return;
+      }
+      // The cursor primaryKey is stored in filteredKeys.
+      let primaryKey = result.primaryKey;
+      if (DEBUG) debug("Data: " + result.primaryKey);
+      filteredKeys.push(primaryKey);
+      result.continue();   
+    };
+
+    let onerror = function (event) {
+      if (DEBUG) debug("Error retrieving cursor.");
+      failureCb(event.target);
+      return;
+    };
+
     // As we need to get the list of keys that match the filter criteria
     // sorted by timestamp index, we will split the key obtention in two
     // different transactions. One for the timestamp index and another one
@@ -394,7 +406,7 @@ SmsDatabaseService.prototype = {
     let self = this;
     this.newTxn(IDBTransaction.READ_ONLY,function (txn, store, error) {
       if (error) {
-        failureCb("Transaction error.");
+        failureCb(error);
         return;
       }
       // In first place, we retrieve the keys that match the filter.startDate
@@ -411,74 +423,41 @@ SmsDatabaseService.prototype = {
         timeRequest = store.index("timestamp").openKeyCursor(timeKeyRange); 
       }
 
-      timeRequest.onsuccess = function (event) {
-        let result = event.target.result;
-        // Once the cursor has retrieved all keys that matches its key range,
-        // the filter search is done and filterCount is decreased.
-        if (!!result == false) {
-          debug("timeRequest filterCount: " + filterCount);
-          filterCount--;
-          return;
-        }
-        // The cursor primaryKey is stored in filteredKeys.
-        let primaryKey = result.primaryKey;
-        if (DEBUG) debug("Data: " + result.primaryKey);
-        filteredKeys.push(primaryKey);
-        result.continue();
-      };
-
-      timeRequest.onerror = function (event) {
-
-      };
+      timeRequest.onsuccess = onsuccess;
+      timeRequest.onerror = onerror;
     }, function (event) {
       // The rest of searches will happen within the same transaction
       self.newTxn(IDBTransaction.READ_ONLY, function (txn, store, error) {
         if (error) {
-          failureCb("Transaction error.");
+          failureCb(error);
           return;
         }
-        // Retrieve the keys from the 'delivery' index that matches the value of
-        // filter.delivery.
-        let deliveryKeyRange = IDBKeyRange.only(filter.delivery);
-        let deliveryRequest = store.index("delivery").openKeyCursor(deliveryKeyRange);
-
-        // Retrieve the keys from the 'sender' and 'receiver' indexes that match
-        // the values of filter.numbers
-        let numberKeyRange = IDBKeyRange.bound(filter.numbers[0],
-                                               filter.numbers[filter.numbers.length-1]);
-        let senderRequest = store.index("sender").openKeyCursor(numberKeyRange);
-        let receiverRequest = store.index("receiver").openKeyCursor(numberKeyRange);
-
-        //TODO what´s the code style for this?
-        deliveryRequest.onsuccess =
-        senderRequest.onsuccess =
-        receiverRequest.onsuccess = function (event) {
-          let result = event.target.result;
-          // Once the cursor has retrieved all keys that matches its key range,
-          // the filter search is done and filterCount is decreased.
-          if (!!result == false) {
-            debug("filterCount: " + filterCount);
-            filterCount--;
-            return;
-          }
-          // The cursor primaryKey is stored in filteredKeys.
-          let primaryKey = result.primaryKey;
-          if (DEBUG) debug("Data: " + result.primaryKey);
-          filteredKeys.push(primaryKey);
-          result.continue();
-        };
-
-        //TODO what´s the code style for this?
-        deliveryRequest.onerror =
-        senderRequest.onerror =
-        receiverRequest.onerror = function (event) {
-          if (DEBUG) debug("Error retrieving cursor.");
-          failureCb();
-        };
+        
+        if (filter.delivery) {
+          // Retrieve the keys from the 'delivery' index that matches the value of
+          // filter.delivery.
+          let deliveryKeyRange = IDBKeyRange.only(filter.delivery);
+          let deliveryRequest = store.index("delivery").openKeyCursor(deliveryKeyRange);
+          deliveryRequest.onsuccess = onsuccess;
+          deliveryRequest.onerror = onerror;
+        } else {
+          filterCount--;
+        }
+        
+        if (filter.numbers) {
+          // Retrieve the keys from the 'sender' and 'receiver' indexes that match
+          // the values of filter.numbers
+          let numberKeyRange = IDBKeyRange.bound(filter.numbers[0],
+                                                 filter.numbers[filter.numbers.length-1]);
+          let senderRequest = store.index("sender").openKeyCursor(numberKeyRange);
+          let receiverRequest = store.index("receiver").openKeyCursor(numberKeyRange);
+          senderRequest.onsuccess = receiverRequest.onsuccess = onsuccess;
+          senderRequest.onerror = receiverRequest.onerror = onerror;
+        }
       }, function (event) {
         if (filterCount == 0) {
           if (filteredKeys.length == 0) {
-            failureCb();
+            failureCb("0 retrieved");
             return;
           }
           // We need to get rid off the duplicated keys.          
@@ -501,6 +480,7 @@ SmsDatabaseService.prototype = {
             request.onsuccess = function (event) {
               if (DEBUG) debug("Message successfully retrieved");
               txn.result = event.target.result;
+              return;
             };
             request.onerror = function (event) {
               failureCb();
@@ -511,8 +491,9 @@ SmsDatabaseService.prototype = {
             successCb(messageListId, message);
             return;
           }, failureCb);
+        } else {        
+          failureCb("There are filters left to apply");
         }
-        failureCb();
       }, failureCb);
     }, failureCb);
   },
@@ -677,7 +658,7 @@ SmsDatabaseService.prototype = {
                                                               requestId,
                                                               processId);
             return;
-          }
+          });
         }
         gSmsRequestManager.notifyReadingMessageListFailed(eInternalError,
                                                           requestId,
