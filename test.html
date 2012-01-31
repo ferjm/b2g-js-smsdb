@@ -6,7 +6,7 @@
 <button onclick="next();">Run tests</button>
 <p>Warning! Running these tests will destroy all your SMS data!</p>
 
-<script type="application/javascript;version=1.8" src="smsdatabase.js"></script>
+<script type="application/javascript;version=1.8" src="smsowd.js"></script>
 <script type="application/javascript;version=1.8">
 let sample_sms = {
   delivery: "sent",
@@ -44,6 +44,7 @@ function assert(assertion, msg) {
 let index = 0;
 let messageId = 0;
 let messageId2 = 0;
+let listId = 0;
 let steps = [
   function () {
     console.log("Deleting database");
@@ -55,20 +56,20 @@ let steps = [
   },
   function () {    
     console.log("Adding new sms with the SmsDatabaseService API", sample_sms);
-    window.navigator.mozSmsDatabase.saveSentMessageOWD(sample_sms.receiver,
-                                                       sample_sms.body,
-                                                       sample_sms.timestamp,
-                                                       function (record){      
+    window.navigator.mozSmsDatabase.saveSentMessage(sample_sms.receiver,
+                                                    sample_sms.body,
+                                                    sample_sms.timestamp,
+                                                    function (record){      
       messageId = record.id;
       onSuccess(record);
     },onFailure);
   },
   function () {    
     console.log("Adding new sms with the SmsDatabaseService API", sample_sms2);
-    window.navigator.mozSmsDatabase.saveSentMessageOWD(sample_sms.receiver,
-                                                       sample_sms.body,
-                                                       sample_sms.timestamp,
-                                                       function (record){      
+    window.navigator.mozSmsDatabase.saveSentMessage(sample_sms.receiver,
+                                                    sample_sms.body,
+                                                    sample_sms.timestamp,
+                                                    function (record){      
       messageId2 = record.id;
       onSuccess(record);
     },onFailure);
@@ -81,19 +82,34 @@ let steps = [
       endDate: "1326732450",
       numbers: ["+34666222111","+34666222111"]
     };
-    window.navigator.mozSmsDatabase.createMessageListOWD(filter, null, null, function (e) {      
+    window.navigator.mozSmsDatabase.createMessageList(filter, null, null, function (list, m) {
+      listId = list;
+      next();
+    }, onFailure);
+  },
+  function () {
+    console.log("getNextMessageInList");
+    window.navigator.mozSmsDatabase.getNextMessageInList(listId, function (e) {
+      console.log("getNextMessageInList: " + e.id + " " + e.body);
+      next();
+    }, onFailure);
+  },
+  function () {
+    console.log("getAllMessages");
+    window.navigator.mozSmsDatabase.getAllMessages( function (result) {
+      console.log("getAllMessages: " + result.length);
       next();
     }, onFailure);
   },
   function () {
     console.log("Deleting sms with id: " + messageId);
-    window.navigator.mozSmsDatabase.deleteMessageOWD(messageId, function(result) {
+    window.navigator.mozSmsDatabase.deleteMessage(messageId, function(result) {
       next();
     }, onFailure);
   },
   function () {
     console.log("Getting sms with id: " + messageId2);
-    window.navigator.mozSmsDatabase.getMessageOWD(messageId2, function(message){
+    window.navigator.mozSmsDatabase.getMessage(messageId2, function(message){
       if (message.length <= 0) {
         console.log("Message with messageId: " + messageId2 + " not found!");
         next();
@@ -107,7 +123,7 @@ let steps = [
   },
   function () {
     console.log("Getting DELETED sms with id: " + messageId);
-    window.navigator.mozSmsDatabase.getMessageOWD(messageId, function(message){
+    window.navigator.mozSmsDatabase.getMessage(messageId, function(message){
       if (message.length <= 0) {
         console.log("Message with messageId: " + messageId + " not found!");
         next();
