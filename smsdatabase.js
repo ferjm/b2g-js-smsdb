@@ -103,6 +103,16 @@ let MessagesListManager = (function() {
         return _keys[uuid];
       }
       debug("Trying to get an unknown list!");
+    },
+
+   /**
+    * Get the next key for a specific message list
+    */
+    getNextInList: function (uuid) {
+      if (_keys[uuid]) {
+        return _keys[uuid].shift();
+      }
+      debug("Trying to get a message from an unknown list!");
       return null;
     },
 
@@ -390,7 +400,7 @@ SmsDatabaseService.prototype = {
       let primaryKey = result.primaryKey;
       if (DEBUG) debug("Data: " + result.primaryKey);
       filteredKeys.push(primaryKey);
-      result.continue();   
+      result.continue();
     };
 
     let onerror = function (event) {
@@ -420,7 +430,7 @@ SmsDatabaseService.prototype = {
         timeRequest = store.index("timestamp").openKeyCursor(timeKeyRange,
                                                              IDBCursor.PREV);
       } else {
-        timeRequest = store.index("timestamp").openKeyCursor(timeKeyRange); 
+        timeRequest = store.index("timestamp").openKeyCursor(timeKeyRange);
       }
 
       timeRequest.onsuccess = onsuccess;
@@ -432,7 +442,7 @@ SmsDatabaseService.prototype = {
           failureCb(error);
           return;
         }
-        
+
         if (filter.delivery) {
           // Retrieve the keys from the 'delivery' index that matches the value of
           // filter.delivery.
@@ -443,7 +453,7 @@ SmsDatabaseService.prototype = {
         } else {
           filterCount--;
         }
-        
+
         if (filter.numbers) {
           // Retrieve the keys from the 'sender' and 'receiver' indexes that match
           // the values of filter.numbers
@@ -453,6 +463,8 @@ SmsDatabaseService.prototype = {
           let receiverRequest = store.index("receiver").openKeyCursor(numberKeyRange);
           senderRequest.onsuccess = receiverRequest.onsuccess = onsuccess;
           senderRequest.onerror = receiverRequest.onerror = onerror;
+        } else {
+          filterCount--;
         }
       }, function (event) {
         if (filterCount == 0) {
@@ -460,16 +472,16 @@ SmsDatabaseService.prototype = {
             failureCb("0 retrieved");
             return;
           }
-          // We need to get rid off the duplicated keys.          
+          // We need to get rid off the duplicated keys.
           let result = [];
           for (let i = 0; i < filteredKeys.length; i++ ) {
-            if ( result.indexOf( filteredKeys[i], 0, filteredKeys ) < 0 ) { 
-              result.push(filteredKeys[i]); 
+            if ( result.indexOf( filteredKeys[i], 0, filteredKeys ) < 0 ) {
+              result.push(filteredKeys[i]);
             }
           }
           // At this point, filteredKeys should have all the keys that matches
           // all the search filters. So we take the first key in another txn
-          // and retrieve the corresponding message. The rest of the keys are 
+          // and retrieve the corresponding message. The rest of the keys are
           // added to the MessagesListManager, which assigns it a message list
           // identifier.
           let message;
@@ -485,13 +497,13 @@ SmsDatabaseService.prototype = {
             request.onerror = function (event) {
               failureCb();
             };
-          }, function (event) {            
+          }, function (event) {
             let messageListId = MessagesListManager.add(filteredKeys);
             let message = event.target.result;
             successCb(messageListId, message);
             return;
           }, failureCb);
-        } else {        
+        } else {
           failureCb("There are filters left to apply");
         }
       }, failureCb);
@@ -499,9 +511,9 @@ SmsDatabaseService.prototype = {
   },
 
   // Final implementation for Mozilla
-  createMessageList: function createMessageList(filter, 
-                                                reverse, 
-                                                requestId, 
+  createMessageList: function createMessageList(filter,
+                                                reverse,
+                                                requestId,
                                                 processId) {
     // This object keeps a list of the keys that matches the search criteria
     // according to the nsIMozSmsFilter parameter.
@@ -525,7 +537,7 @@ SmsDatabaseService.prototype = {
     this.newTxn(IDBTransaction.READ_ONLY,function (txn, store, error) {
       if (error) {
         gSmsRequestManager.notifyReadingMessageListFailed(eInternalError,
-                                                          requestId, 
+                                                          requestId,
                                                           processId);
         return;
       }
@@ -540,7 +552,7 @@ SmsDatabaseService.prototype = {
         timeRequest = store.index("timestamp").openKeyCursor(timeKeyRange,
                                                              IDBCursor.PREV);
       } else {
-        timeRequest = store.index("timestamp").openKeyCursor(timeKeyRange); 
+        timeRequest = store.index("timestamp").openKeyCursor(timeKeyRange);
       }
 
       timeRequest.onsuccess = function (event) {
@@ -569,7 +581,7 @@ SmsDatabaseService.prototype = {
       self.newTxn(IDBTransaction.READ_ONLY, function (txn, store, error) {
         if (error) {
           gSmsRequestManager.notifyReadingMessageListFailed(eInternalError,
-                                                            requestId, 
+                                                            requestId,
                                                             processId);
           return;
         }
@@ -601,13 +613,13 @@ SmsDatabaseService.prototype = {
           filteredKeys.push(primaryKey);
           result.continue();
         };
-        
+
         //TODO what´s the code style for this?
         deliveryRequest.onerror =
         senderRequest.onerror =
         receiverRequest.onerror = function (event) {
           gSmsRequestManager.notifyReadingMessageListFailed(eInternalError,
-                                                            requestId, 
+                                                            requestId,
                                                             processId);
           return;
         };
@@ -620,17 +632,17 @@ SmsDatabaseService.prototype = {
           // We need to get rid off the duplicated keys.
           let result = [];
           for (let i = 0; i < filteredKeys.length; i++ ) {
-            if ( result.indexOf( filteredKeys[i], 0, filteredKeys ) < 0 ) { 
-              result.push(filteredKeys[i]); 
+            if ( result.indexOf( filteredKeys[i], 0, filteredKeys ) < 0 ) {
+              result.push(filteredKeys[i]);
             }
           }
           // At this point, filteredKeys should have all the keys that matches
-          // all the search filters. So we take the first key and retrieve the 
+          // all the search filters. So we take the first key and retrieve the
           // corresponding message. The rest of the keys are added to the
-          // MessagesListManager, which assigns it and returns a message list 
+          // MessagesListManager, which assigns it and returns a message list
           // identifier.
           self.newTxn(IDBTransaction.READ_ONLY, function (txn, store, error) {
-            //TODO Do we want to keep the list of keys?            
+            //TODO Do we want to keep the list of keys?
             let messageId = result.shift();
             let request = store.get(messageId);
             request.onsuccess = function (event) {
@@ -669,13 +681,34 @@ SmsDatabaseService.prototype = {
 
 
   getNextMessageInListOWD: function getNextMessageInListOWD(listId,
-                                                            requestId,
-                                                            processId) {
-    //TODO    
+                                                            successCb,
+                                                            failureCb) {
+    let key = MessagesListManager.getNextInList(listId);
+    if (key == null) {
+      failureCb();
+      return;
+    }
+    if (key) {
+      this.newTxn(IDBTransaction.READ_ONLY, function (txn, store, error) {
+        let request = store.get(key);
+        request.onsuccess = function (event) {
+          let data = request.result;
+          if (data) {
+            txn.result = data;
+            return;
+          }
+          failureCb("Could not retrieve sms");
+        };
+        request.onerror = failureCb;
+      }, function (event) {
+        successCb(event.target.result);
+      }, failureCb);
+    }
   },
 
   clearMessageList: function clearMessageList(listId) {
-    //TODO
+    MessagesListManager.remove(listId);
+    successCb();
   }
 
 };

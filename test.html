@@ -102,6 +102,13 @@ let steps = [
     }, onFailure);
   },
   function () {
+    console.log("getMessages");
+    owdSms.getMessages( {}, false, function (result) {
+      console.log("OWD getMessages: " + result.length);
+      next();
+    }, onFailure);
+  },
+  function () {
     console.log("Deleting sms with id: " + messageId);
     window.navigator.mozSmsDatabase.deleteMessage(messageId, function(result) {
       next();

@@ -576,7 +576,11 @@ SmsManager.prototype = {
   },
 
   getMessages: function getMessages(filter, reverse, successCb, failureCb) {
-    if (filter) {
+    if (filter && 
+        (filter.hasOwnProperty("delivered") ||
+         filter.hasOwnProperty("starDate") || 
+         filter.hasOwnProperty("endDate") ||
+         filter.hasOwnProperty("numbers"))) {
       //TODO
     } else {
       smsdb.getAllMessages(successCb, failureCb);
@@ -591,6 +595,8 @@ SmsManager.prototype = {
  */
 var smsdb = window.navigator.mozSmsDatabase = new SmsDatabaseService();
 smsdb.init(window);
+
+var owdSms = new SmsManager();
 
 /*function debug() {
   dump(Array.slice(arguments).join(" ") + "\n");
