@@ -526,27 +526,43 @@ function generateUUID() {
 /**
  * Wrapper for the fake implementation of mozSmsManager (nsIDOMMozNavigatorSms)
  */
-function SmsManager() = {
+function SmsManager() {
+  let mozSms = window.navigator.mozSms;
 }
 SmsManager.prototype = {
   getNumberOfMessagesForText: function getNumberOfMessagesForText(text) {
-    //TODO
+    return mozSms.getNumberOfMessagesForText();
   },
 
-  send: function send(number, message) {
-    //TODO
+  send: function send(number, message, successCb, failureCb) {
+    let request = mozSms.send(number, message);
+    request.onsuccess = function (event) {
+      let data = event.target.result;
+      if (data) {
+        smsdb.saveSentMessage(data.receiver,
+                              data.body,
+                              data.timestamp,
+                              successCb,
+                              failureCb);
+        return;
+      }
+      failureCb("mozSms.send: No data");
+    };
+    request.onerror = function (event) {
+      failureCb(event);
+    };
   },
 
-  getMessage: function getMessage(id) {
-    //TODO    
+  getMessage: function getMessage(id, successCb, failureCb) {
+    smsdb.getMessage(id, successCb, failureCb);
   },
 
-  delete: function delete(param) {
-    //TODO
+  delete: function deleteMessage(id, successCb, failureCb) {
+    smsdb.deleteMessage(id, successCb, failureCb);
   },
 
-  getMessages: function getMessages(filter, reverse) {
-    //TODO
+  getMessages: function getMessages(filter, reverse, successCb, failureCb) {
+    
   },  
 };
 
